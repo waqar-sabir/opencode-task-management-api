@@ -15,13 +15,13 @@
 | Technical architecture | Approved (`ARCHITECTURE.md`) |
 | Implementation plan | Approved (this document) |
 | Phase 0 — scaffold and tooling | **Complete** |
-| Application code | Full task lifecycle API except health and graceful shutdown |
+| Application code | Complete v1 API: task lifecycle, health check, graceful shutdown |
 | `package.json` / lockfile | Present and committed |
-| Tests | 132 tests: unit (config, repository, migrations, mapper) and HTTP integration |
-| Database | Schema v1; runtime file at `DATABASE_PATH` |
+| Tests | 149 tests: unit (config, repository, migrations, mapper, error handler) and HTTP/persistence/shutdown integration |
+| Database | Schema v1; runtime file at `DATABASE_PATH`, mode `0600` inside a `0700` directory |
 | Git repository | Initialized on `main`; `origin` configured |
 
-Phase 0 is complete. Each later gate must pass before the next phase begins.
+Phases 0–4 are complete. Each later gate must pass before the next phase begins.
 
 ---
 
@@ -290,24 +290,24 @@ handling.
 
 ### Tasks
 
-- [ ] Implement `GET /healthz` with a `SELECT 1` check; return `503` on failure.
-- [ ] Implement graceful shutdown:
+- [x] Implement `GET /healthz` with a `SELECT 1` check; return `503` on failure.
+- [x] Implement graceful shutdown:
       - close the HTTP server;
       - then close the database;
       - handle `SIGINT` and `SIGTERM`.
-- [ ] Complete content-type and body-size handling:
+- [x] Complete content-type and body-size handling:
       - `415` for non-JSON writes;
       - `413` for bodies over 100 KB;
       - `400` for malformed JSON.
-- [ ] Complete SQLite error mapping:
+- [x] Complete SQLite error mapping:
       - busy/locked → `503 STORAGE_UNAVAILABLE`;
       - unexpected → `500 INTERNAL_ERROR`.
-- [ ] Enforce POSIX permissions for the data directory and database file.
-- [ ] Add startup failure handling for invalid config, unreadable database, failed
+- [x] Enforce POSIX permissions for the data directory and database file.
+- [x] Add startup failure handling for invalid config, unreadable database, failed
       migration, and newer schema version.
-- [ ] Verify logs exclude query strings, titles, descriptions, and bodies.
-- [ ] Add a 404 handler that uses the standard envelope.
-- [ ] Test:
+- [x] Verify logs exclude query strings, titles, descriptions, and bodies.
+- [x] Add a 404 handler that uses the standard envelope.
+- [x] Test:
       - health success and failure;
       - shutdown leaves a reopenable database;
       - storage-error mapping;
@@ -319,10 +319,10 @@ handling.
 
 ### Gate
 
-- [ ] G3, G7–G13, H1–H2, P1–P9, and the error-mapping cases pass.
-- [ ] Restart after shutdown preserves data.
-- [ ] No task content appears in logs.
-- [ ] `npm run verify` passes.
+- [x] G3, G7–G13, H1–H2, P1–P9, and the error-mapping cases pass.
+- [x] Restart after shutdown preserves data.
+- [x] No task content appears in logs.
+- [x] `npm run verify` passes.
 
 **Demo:** health check, invalid requests, forced storage failure, and clean restart.
 

@@ -3,9 +3,9 @@
 A single-user task management API that runs locally with Node.js and one SQLite
 file. No accounts, no external services.
 
-> **Status:** Phase 3. Full task lifecycle — create, read, list, edit, delete,
-> complete, search, and filter. Health checks and graceful shutdown arrive in
-> Phase 4.
+> **Status:** Phase 4. Complete v1 API — task lifecycle, search/filter/sort,
+> `GET /healthz`, and graceful shutdown. Final acceptance verification and the
+> full README arrive in Phase 5. See `docs/SPEC.md` for the contract.
 
 ## Requirements
 

@@ -24,7 +24,13 @@ beforeEach(() => {
   database = new DatabaseSync(":memory:");
   migrate(database);
   repository = new SqliteTaskRepository(database);
-  app = createApp({ repository, logger });
+  app = createApp({
+    repository,
+    logger,
+    healthCheck: () => {
+      database.prepare("SELECT 1").get();
+    },
+  });
 });
 
 afterEach(() => {
@@ -457,6 +463,7 @@ describe("GET /api/v1/tasks", () => {
     const capturedApp = createApp({
       repository,
       logger: pino({ level: "info" }, stream),
+      healthCheck: () => undefined,
     });
 
     await request(capturedApp).get("/api/v1/tasks?q=secret-term");
@@ -468,6 +475,33 @@ describe("GET /api/v1/tasks", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.path).toBe("/api/v1/tasks");
     expect(JSON.stringify(entries[0])).not.toContain("secret-term");
+  });
+
+  it("never logs titles, descriptions, or search terms", async () => {
+    const lines: string[] = [];
+    const stream = {
+      write: (line: string) => {
+        lines.push(line);
+      },
+    };
+    const capturedApp = createApp({
+      repository,
+      logger: pino({ level: "info" }, stream),
+      healthCheck: () => undefined,
+    });
+
+    await request(capturedApp).post("/api/v1/tasks").send({
+      title: "CONFIDENTIAL-TITLE",
+      description: "CONFIDENTIAL-DESCRIPTION",
+    });
+    await request(capturedApp).get("/api/v1/tasks?q=SECRETSEARCHTERM");
+
+    const output = lines.join("\n");
+    expect(output).not.toContain("CONFIDENTIAL-TITLE");
+    expect(output).not.toContain("CONFIDENTIAL-DESCRIPTION");
+    expect(output).not.toContain("SECRETSEARCHTERM");
+    expect(output).toContain('"method":"POST"');
+    expect(output).toContain('"method":"GET"');
   });
 });
 
