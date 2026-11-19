@@ -15,10 +15,10 @@
 | Technical architecture | Approved (`ARCHITECTURE.md`) |
 | Implementation plan | Approved (this document) |
 | Phase 0 — scaffold and tooling | **Complete** |
-| Application code | Placeholder `src/server.ts` only |
+| Application code | Persistence layer; HTTP not started |
 | `package.json` / lockfile | Present and committed |
-| Tests | Harness test only |
-| Database | **None** |
+| Tests | 53 tests across config, repository, migrations, mapper, and persistence |
+| Database | Schema v1; no runtime database file |
 | Git repository | Initialized on `main`; `origin` configured |
 
 Phase 0 is complete. Each later gate must pass before the next phase begins.
@@ -124,35 +124,36 @@ without exposing HTTP.
 
 ### Tasks
 
-- [ ] Implement `src/config.ts` with Zod-validated environment values and defaults.
-- [ ] Fail startup on invalid config; warn when `HOST` is not loopback.
-- [ ] Implement `src/errors.ts` with stable error codes (`VALIDATION_ERROR`,
+- [x] Implement `src/config.ts` with Zod-validated environment values and defaults.
+- [x] Fail startup on invalid config; warn when `HOST` is not loopback
+      (detection in `config.ts`; the warning is emitted by `server.ts` in Phase 2).
+- [x] Implement `src/errors.ts` with stable error codes (`VALIDATION_ERROR`,
       `NOT_FOUND`, `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`,
       `STORAGE_UNAVAILABLE`, `INTERNAL_ERROR`).
-- [ ] Define `Task`, `TaskStatus`, `CreateTaskRecord`, `TaskContentPatch`,
+- [x] Define `Task`, `TaskStatus`, `CreateTaskRecord`, `TaskContentPatch`,
       `TaskListQuery`, and `TaskRepository` in `src/repositories/task-repository.ts`.
-- [ ] Implement `src/db/connection.ts`:
+- [x] Implement `src/db/connection.ts`:
       - resolve `DATABASE_PATH`;
       - create parent directories with mode `0700`;
       - open `DatabaseSync`;
       - set WAL, `synchronous=FULL`, `foreign_keys=ON`, `busy_timeout=5000`;
       - set file mode `0600` on POSIX;
       - close cleanly.
-- [ ] Implement `src/db/migrations.ts` with migration version 1 from
+- [x] Implement `src/db/migrations.ts` with migration version 1 from
       `ARCHITECTURE.md` §7.1.
-- [ ] Use `PRAGMA user_version`; apply each migration in `BEGIN IMMEDIATE`; fail if the
+- [x] Use `PRAGMA user_version`; apply each migration in `BEGIN IMMEDIATE`; fail if the
       database is newer than the code.
-- [ ] Implement `src/db/row-mapper.ts` with explicit snake_case → camelCase mapping and
+- [x] Implement `src/db/row-mapper.ts` with explicit snake_case → camelCase mapping and
       status validation.
-- [ ] Implement `src/db/sqlite-task-repository.ts`:
+- [x] Implement `src/db/sqlite-task-repository.ts`:
       - create with `INSERT ... RETURNING *`;
       - find by ID;
       - list with filters, sort allowlist, count, limit, offset;
       - update with `BEGIN IMMEDIATE` and `search_text` recomputation;
       - delete with `changes`;
       - idempotent complete with `COALESCE` and `CASE`.
-- [ ] Implement search normalization and `LIKE ... ESCAPE` handling.
-- [ ] Unit-test the repository with `:memory:`:
+- [x] Implement search normalization and `LIKE ... ESCAPE` handling.
+- [x] Unit-test the repository with `:memory:`:
       - create/find/update/delete/complete;
       - completion idempotency;
       - search by title, description, case, substring, and literal wildcards;
@@ -160,20 +161,20 @@ without exposing HTTP.
       - sort and tie-break;
       - status filter;
       - database `CHECK` behavior for invalid rows.
-- [ ] Test migrations:
+- [x] Test migrations:
       - fresh database reaches `user_version=1`;
       - rerunning is idempotent;
       - a newer `user_version` fails startup;
       - schema contains both indexes.
-- [ ] Test persistence with a temporary file database: write, close, reopen, read.
+- [x] Test persistence with a temporary file database: write, close, reopen, read.
 
 ### Gate
 
-- [ ] Repository and migration tests pass.
-- [ ] A temporary file database survives close/reopen.
-- [ ] `:memory:` tests do not touch `./data`.
-- [ ] `npm run verify` passes.
-- [ ] No HTTP route or Express app exists yet.
+- [x] Repository and migration tests pass.
+- [x] A temporary file database survives close/reopen.
+- [x] `:memory:` tests do not touch `./data`.
+- [x] `npm run verify` passes.
+- [x] No HTTP route or Express app exists yet.
 
 **Demo:** run repository tests and show `user_version` and a persisted task.
 

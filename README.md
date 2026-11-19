@@ -3,8 +3,8 @@
 A single-user task management API that runs locally with Node.js and one SQLite
 file. No accounts, no external services.
 
-> **Status:** Phase 0 scaffold. Tooling, scripts, and configuration are in place;
-> no endpoints or storage code exist yet.
+> **Status:** Phase 1. Persistence layer (config, SQLite schema, repository)
+> implemented; the HTTP API is not started yet.
 
 ## Requirements
 
