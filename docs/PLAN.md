@@ -359,14 +359,14 @@ handling.
 
 ### Gate
 
-- [ ] All `SPEC.md` acceptance criteria pass.
-- [ ] `npm ci && npm run verify` passes from a clean clone.
-- [ ] `npm run build` succeeds and `node dist/server.js` answers `GET /healthz`.
-- [ ] Coverage target is met.
-- [ ] README demo completes in under 10 minutes.
-- [ ] Persistence demo works across a restart.
-- [ ] `AGENTS.md` and the three documents match the code.
-- [ ] No out-of-scope feature is present.
+- [x] All `SPEC.md` acceptance criteria pass.
+- [x] `npm ci && npm run verify` passes from a clean clone.
+- [x] `npm run build` succeeds and `node dist/server.js` answers `GET /healthz`.
+- [x] Coverage target is met.
+- [x] README demo completes in under 10 minutes.
+- [x] Persistence demo works across a restart.
+- [x] `AGENTS.md` and the three documents match the code.
+- [x] No out-of-scope feature is present.
 
 **Demo:** the full README flow from a clean clone.
 
@@ -445,17 +445,17 @@ npx vitest run tests/integration/tasks.test.ts
 
 ## 13. Definition of done
 
-- [ ] All acceptance criteria in `SPEC.md` §14 are verified.
-- [ ] `npm ci && npm run verify` passes from a clean clone.
-- [ ] `npm run build` succeeds and `node dist/server.js` answers `GET /healthz`.
-- [ ] `npm run test:coverage` meets the 85% core target.
-- [ ] Every endpoint is demonstrated in the README.
-- [ ] Persistence works across restart.
-- [ ] Health, graceful shutdown, and error mapping work.
-- [ ] Logs contain no task content or search terms.
-- [ ] No secrets, database files, or generated output are tracked.
-- [ ] `AGENTS.md`, `SPEC.md`, `ARCHITECTURE.md`, `PLAN.md`, and the README agree.
-- [ ] No out-of-scope feature is present.
+- [x] All acceptance criteria in `SPEC.md` §14 are verified.
+- [x] `npm ci && npm run verify` passes from a clean clone.
+- [x] `npm run build` succeeds and `node dist/server.js` answers `GET /healthz`.
+- [x] `npm run test:coverage` meets the 85% core target.
+- [x] Every endpoint is demonstrated in the README.
+- [x] Persistence works across restart.
+- [x] Health, graceful shutdown, and error mapping work.
+- [x] Logs contain no task content or search terms.
+- [x] No secrets, database files, or generated output are tracked.
+- [x] `AGENTS.md`, `SPEC.md`, `ARCHITECTURE.md`, `PLAN.md`, and the README agree.
+- [x] No out-of-scope feature is present.
 
 ---
 

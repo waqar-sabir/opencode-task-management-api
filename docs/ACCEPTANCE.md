@@ -17,7 +17,7 @@ Verification record for `docs/SPEC.md` §14. Date: 2026-11-19.
 
 | ID | Result | Evidence |
 | --- | --- | --- |
-| G1 | Pass | Clean clone: `npm ci && npm run verify` (see final commit) |
+| G1 | Pass | Clean clone of the phase-5 commit: `npm ci`, `npm run verify` (151 tests), `npm run build`, `/healthz` `200` — 2026-11-19 |
 | G2 | Pass | `README.md` documents setup, run, every endpoint, and error examples |
 | G3 | Pass | `tests/unit/middleware/error-handler.test.ts`; every HTTP error asserted as `{ error: { code, message } }` |
 | G4 | Pass | Unknown create/update fields and unknown query parameters return `400` (`tasks.test.ts`) |
