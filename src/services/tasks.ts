@@ -7,12 +7,15 @@ import type {
   TaskPage,
   TaskRepository,
 } from "../repositories/task-repository.js";
-import type { CreateTaskInput } from "../schemas/task.js";
+import type { CreateTaskInput, UpdateTaskInput } from "../schemas/task.js";
 
 export interface TaskService {
   createTask(input: CreateTaskInput): Promise<Task>;
   getTask(id: string): Promise<Task>;
   listTasks(query: TaskListQuery): Promise<TaskPage>;
+  updateTask(id: string, patch: UpdateTaskInput): Promise<Task>;
+  deleteTask(id: string): Promise<void>;
+  completeTask(id: string): Promise<Task>;
 }
 
 /**
@@ -42,6 +45,37 @@ export function createTaskService(repository: TaskRepository): TaskService {
 
     async listTasks(query) {
       return repository.list(query);
+    },
+
+    async updateTask(id, patch) {
+      const updated = await repository.updateContent(
+        id,
+        patch,
+        new Date().toISOString(),
+      );
+
+      if (!updated) {
+        throw AppError.notFound();
+      }
+
+      return updated;
+    },
+
+    async deleteTask(id) {
+      const deleted = await repository.delete(id);
+      if (!deleted) {
+        throw AppError.notFound();
+      }
+    },
+
+    async completeTask(id) {
+      const completed = await repository.complete(id, new Date().toISOString());
+
+      if (!completed) {
+        throw AppError.notFound();
+      }
+
+      return completed;
     },
   };
 }

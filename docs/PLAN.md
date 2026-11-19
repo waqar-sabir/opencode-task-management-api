@@ -15,9 +15,9 @@
 | Technical architecture | Approved (`ARCHITECTURE.md`) |
 | Implementation plan | Approved (this document) |
 | Phase 0 — scaffold and tooling | **Complete** |
-| Application code | Persistence layer + create/detail/list HTTP API |
+| Application code | Full task lifecycle API except health and graceful shutdown |
 | `package.json` / lockfile | Present and committed |
-| Tests | 100 tests: unit (config, repository, migrations, mapper) and HTTP integration |
+| Tests | 132 tests: unit (config, repository, migrations, mapper) and HTTP integration |
 | Database | Schema v1; runtime file at `DATABASE_PATH` |
 | Git repository | Initialized on `main`; `origin` configured |
 
@@ -248,26 +248,26 @@ handling.
 
 ### Tasks
 
-- [ ] Extend `src/services/tasks.ts` with update, delete, and complete.
-- [ ] Implement `PATCH /api/v1/tasks/:id`:
+- [x] Extend `src/services/tasks.ts` with update, delete, and complete.
+- [x] Implement `PATCH /api/v1/tasks/:id`:
       - partial content update;
       - at least one field;
       - reject status, IDs, and timestamps;
       - refresh `updatedAt`.
-- [ ] Implement `DELETE /api/v1/tasks/:id` with `204`.
-- [ ] Implement `POST /api/v1/tasks/:id/complete` with idempotent behavior.
-- [ ] Complete search:
+- [x] Implement `DELETE /api/v1/tasks/:id` with `204`.
+- [x] Implement `POST /api/v1/tasks/:id/complete` with idempotent behavior.
+- [x] Complete search:
       - title and description;
       - case-insensitive, including non-ASCII case pairs;
       - substring;
       - literal `%`, `_`, `\`;
       - `q` trim, empty handling, and 200-code-point cap.
-- [ ] Complete search and filter:
+- [x] Complete search and filter:
       - `status=todo|completed`;
       - repeated status rejected;
       - search + filter `AND`;
       - filter combined with search `total`.
-- [ ] Integration-test:
+- [x] Integration-test:
       - U1–U8, X1–X4, M1–M5;
       - S1–S10, F1–F4;
       - completed task editing and deletion;
@@ -277,8 +277,8 @@ handling.
 
 ### Gate
 
-- [ ] U1–U8, X1–X4, M1–M5, S1–S10, and F1–F4 pass.
-- [ ] `npm run verify` passes.
+- [x] U1–U8, X1–X4, M1–M5, S1–S10, and F1–F4 pass.
+- [x] `npm run verify` passes.
 
 **Demo:** edit, search, filter, complete twice, and delete through HTTP.
 

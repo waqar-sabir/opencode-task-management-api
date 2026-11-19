@@ -470,3 +470,343 @@ describe("GET /api/v1/tasks", () => {
     expect(JSON.stringify(entries[0])).not.toContain("secret-term");
   });
 });
+
+describe("PATCH /api/v1/tasks/:id", () => {
+  it("updates only the supplied content fields", async () => {
+    const created = await createTask({
+      title: "Old title",
+      description: "Keep me",
+    });
+
+    const response = await request(app)
+      .patch(`/api/v1/tasks/${created.body.id}`)
+      .send({ title: "New title" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.title).toBe("New title");
+    expect(response.body.description).toBe("Keep me");
+  });
+
+  it("keeps id and createdAt and never moves updatedAt backwards", async () => {
+    const created = await createTask({ title: "Stable" });
+
+    const response = await request(app)
+      .patch(`/api/v1/tasks/${created.body.id}`)
+      .send({ description: "Added" });
+
+    expect(response.body.id).toBe(created.body.id);
+    expect(response.body.createdAt).toBe(created.body.createdAt);
+    expect(Date.parse(response.body.updatedAt)).toBeGreaterThanOrEqual(
+      Date.parse(created.body.updatedAt),
+    );
+  });
+
+  it("accepts an empty description to clear it", async () => {
+    const created = await createTask({
+      title: "Clearable",
+      description: "Remove me",
+    });
+
+    const response = await request(app)
+      .patch(`/api/v1/tasks/${created.body.id}`)
+      .send({ description: "" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.description).toBe("");
+  });
+
+  it("requires at least one content field", async () => {
+    const created = await createTask({ title: "Untouched" });
+
+    const response = await request(app)
+      .patch(`/api/v1/tasks/${created.body.id}`)
+      .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it.each(["status", "id", "createdAt", "updatedAt", "completedAt"])(
+    "rejects the %s field",
+    async (field) => {
+      const created = await createTask({ title: "Guarded" });
+
+      const response = await request(app)
+        .patch(`/api/v1/tasks/${created.body.id}`)
+        .send({ [field]: "value" });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    },
+  );
+
+  it("applies the create limits to title and description", async () => {
+    const created = await createTask({ title: "Limits" });
+
+    const longTitle = await request(app)
+      .patch(`/api/v1/tasks/${created.body.id}`)
+      .send({ title: "x".repeat(201) });
+    const longDescription = await request(app)
+      .patch(`/api/v1/tasks/${created.body.id}`)
+      .send({ description: "x".repeat(2001) });
+
+    expect(longTitle.status).toBe(400);
+    expect(longDescription.status).toBe(400);
+  });
+
+  it("edits a completed task without reopening it", async () => {
+    const created = await createTask({ title: "Completed" });
+    const completed = await request(app).post(
+      `/api/v1/tasks/${created.body.id}/complete`,
+    );
+
+    const response = await request(app)
+      .patch(`/api/v1/tasks/${created.body.id}`)
+      .send({ title: "Completed and renamed" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe("completed");
+    expect(response.body.completedAt).toBe(completed.body.completedAt);
+  });
+
+  it("returns 404 for an unknown id and 400 for a malformed one", async () => {
+    const unknown = await request(app)
+      .patch(`/api/v1/tasks/${randomUUID()}`)
+      .send({ title: "Ghost" });
+    const malformed = await request(app)
+      .patch("/api/v1/tasks/not-a-uuid")
+      .send({ title: "Ghost" });
+
+    expect(unknown.status).toBe(404);
+    expect(malformed.status).toBe(400);
+  });
+
+  it("makes edited content searchable", async () => {
+    const created = await createTask({ title: "Original" });
+
+    await request(app)
+      .patch(`/api/v1/tasks/${created.body.id}`)
+      .send({ title: "Renamed subject", description: "Fresh details" });
+
+    const byTitle = await request(app).get("/api/v1/tasks?q=renamed");
+    const byDescription = await request(app).get(
+      "/api/v1/tasks?q=fresh+details",
+    );
+
+    expect(byTitle.body.total).toBe(1);
+    expect(byDescription.body.total).toBe(1);
+  });
+});
+
+describe("DELETE /api/v1/tasks/:id", () => {
+  it("returns 204 with no body", async () => {
+    const created = await createTask({ title: "Delete me" });
+
+    const response = await request(app).delete(
+      `/api/v1/tasks/${created.body.id}`,
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.text).toBe("");
+  });
+
+  it("removes the task from detail, list, search, and filter", async () => {
+    const created = await createTask({ title: "Vanishing task" });
+    await request(app).delete(`/api/v1/tasks/${created.body.id}`);
+
+    const detail = await request(app).get(`/api/v1/tasks/${created.body.id}`);
+    const list = await request(app).get("/api/v1/tasks");
+    const search = await request(app).get("/api/v1/tasks?q=vanishing");
+    const filter = await request(app).get("/api/v1/tasks?status=todo");
+
+    expect(detail.status).toBe(404);
+    expect(list.body.total).toBe(0);
+    expect(search.body.total).toBe(0);
+    expect(filter.body.total).toBe(0);
+  });
+
+  it("returns 404 when deleting twice", async () => {
+    const created = await createTask({ title: "Gone" });
+    await request(app).delete(`/api/v1/tasks/${created.body.id}`);
+
+    const second = await request(app).delete(
+      `/api/v1/tasks/${created.body.id}`,
+    );
+
+    expect(second.status).toBe(404);
+    expect(second.body.error.code).toBe("NOT_FOUND");
+  });
+
+  it("deletes completed tasks", async () => {
+    const created = await createTask({ title: "Finished" });
+    await request(app).post(`/api/v1/tasks/${created.body.id}/complete`);
+
+    const response = await request(app).delete(
+      `/api/v1/tasks/${created.body.id}`,
+    );
+
+    expect(response.status).toBe(204);
+  });
+
+  it("rejects a malformed id", async () => {
+    const response = await request(app).delete("/api/v1/tasks/nope");
+
+    expect(response.status).toBe(400);
+  });
+});
+
+describe("POST /api/v1/tasks/:id/complete", () => {
+  it("completes a todo task", async () => {
+    const created = await createTask({ title: "Finish me" });
+
+    const response = await request(app).post(
+      `/api/v1/tasks/${created.body.id}/complete`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe("completed");
+    expect(response.body.completedAt).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    );
+    expect(Date.parse(response.body.updatedAt)).toBeGreaterThanOrEqual(
+      Date.parse(created.body.updatedAt),
+    );
+  });
+
+  it("is idempotent and preserves the original timestamps", async () => {
+    const created = await createTask({ title: "Idempotent" });
+    const first = await request(app).post(
+      `/api/v1/tasks/${created.body.id}/complete`,
+    );
+
+    const second = await request(app).post(
+      `/api/v1/tasks/${created.body.id}/complete`,
+    );
+
+    expect(second.status).toBe(200);
+    expect(second.body.completedAt).toBe(first.body.completedAt);
+    expect(second.body.updatedAt).toBe(first.body.updatedAt);
+  });
+
+  it("returns 404 for an unknown id and 400 for a malformed one", async () => {
+    const unknown = await request(app).post(
+      `/api/v1/tasks/${randomUUID()}/complete`,
+    );
+    const malformed = await request(app).post(
+      "/api/v1/tasks/not-a-uuid/complete",
+    );
+
+    expect(unknown.status).toBe(404);
+    expect(malformed.status).toBe(400);
+  });
+
+  it("does not affect other tasks", async () => {
+    const target = await createTask({ title: "Target" });
+    const other = await createTask({ title: "Other" });
+
+    await request(app).post(`/api/v1/tasks/${target.body.id}/complete`);
+
+    const untouched = await request(app).get(`/api/v1/tasks/${other.body.id}`);
+
+    expect(untouched.body.status).toBe("todo");
+    expect(untouched.body.completedAt).toBeNull();
+  });
+
+  it("keeps completed tasks visible by default and under the filter", async () => {
+    const created = await createTask({ title: "Visible" });
+    await request(app).post(`/api/v1/tasks/${created.body.id}/complete`);
+
+    const all = await request(app).get("/api/v1/tasks");
+    const completed = await request(app).get("/api/v1/tasks?status=completed");
+
+    expect(all.body.total).toBe(1);
+    expect(completed.body.total).toBe(1);
+    expect(completed.body.items[0].status).toBe("completed");
+  });
+});
+
+describe("search semantics", () => {
+  it("matches non-ASCII case pairs", async () => {
+    await createTask({ title: "Café run" });
+
+    const upper = await request(app).get("/api/v1/tasks?q=CAF%C3%89");
+    const lower = await request(app).get("/api/v1/tasks?q=caf%C3%A9");
+
+    expect(upper.body.total).toBe(1);
+    expect(lower.body.total).toBe(1);
+  });
+
+  it("treats LIKE metacharacters literally", async () => {
+    await createTask({ title: "100% complete" });
+    await createTask({ title: "snake_case" });
+    await createTask({ title: "back\\slash" });
+    await createTask({ title: "unrelated" });
+
+    const percent = await request(app).get("/api/v1/tasks?q=%25");
+    const underscore = await request(app).get("/api/v1/tasks?q=_");
+    const backslash = await request(app).get("/api/v1/tasks?q=%5C");
+
+    expect(
+      percent.body.items.map((task: { title: string }) => task.title),
+    ).toEqual(["100% complete"]);
+    expect(underscore.body.total).toBe(1);
+    expect(backslash.body.total).toBe(1);
+  });
+
+  it("returns an empty list when nothing matches", async () => {
+    await createTask({ title: "Something" });
+
+    const response = await request(app).get("/api/v1/tasks?q=nothinghere");
+
+    expect(response.status).toBe(200);
+    expect(response.body.items).toEqual([]);
+    expect(response.body.total).toBe(0);
+  });
+
+  it.each(["q=", "q=+++", "q=%20%20"])(
+    "treats %s as omitted",
+    async (query) => {
+      await createTask({ title: "Alpha" });
+      await createTask({ title: "Beta" });
+
+      const response = await request(app).get(`/api/v1/tasks?${query}`);
+
+      expect(response.body.total).toBe(2);
+    },
+  );
+
+  it("rejects a q over 200 code points", async () => {
+    const response = await request(app).get(
+      `/api/v1/tasks?q=${"é".repeat(201)}`,
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("paginates the combined search and filter result", async () => {
+    for (const title of ["Task one", "Task two", "Task three"]) {
+      await createTask({ title });
+    }
+    const completedId = (await createTask({ title: "Task four" })).body
+      .id as string;
+    await request(app).post(`/api/v1/tasks/${completedId}/complete`);
+
+    const response = await request(app).get(
+      "/api/v1/tasks?q=task&status=todo&limit=1&page=2",
+    );
+
+    expect(response.body.total).toBe(3);
+    expect(response.body.items).toHaveLength(1);
+  });
+
+  it("finds completed tasks by default", async () => {
+    const created = await createTask({ title: "Searchable done" });
+    await request(app).post(`/api/v1/tasks/${created.body.id}/complete`);
+
+    const response = await request(app).get("/api/v1/tasks?q=searchable");
+
+    expect(response.body.total).toBe(1);
+    expect(response.body.items[0].status).toBe("completed");
+  });
+});

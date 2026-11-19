@@ -1,7 +1,11 @@
 import { Router } from "express";
 
 import { listTasksQuerySchema } from "../schemas/list-tasks.js";
-import { createTaskSchema, taskIdSchema } from "../schemas/task.js";
+import {
+  createTaskSchema,
+  taskIdSchema,
+  updateTaskSchema,
+} from "../schemas/task.js";
 import type { TaskService } from "../services/tasks.js";
 
 export function createTaskRouter(service: TaskService): Router {
@@ -29,6 +33,28 @@ export function createTaskRouter(service: TaskService): Router {
   router.get("/:id", async (request, response) => {
     const id = taskIdSchema.parse(request.params.id);
     const task = await service.getTask(id);
+
+    response.json(task);
+  });
+
+  router.patch("/:id", async (request, response) => {
+    const id = taskIdSchema.parse(request.params.id);
+    const patch = updateTaskSchema.parse(request.body);
+    const task = await service.updateTask(id, patch);
+
+    response.json(task);
+  });
+
+  router.delete("/:id", async (request, response) => {
+    const id = taskIdSchema.parse(request.params.id);
+    await service.deleteTask(id);
+
+    response.status(204).end();
+  });
+
+  router.post("/:id/complete", async (request, response) => {
+    const id = taskIdSchema.parse(request.params.id);
+    const task = await service.completeTask(id);
 
     response.json(task);
   });

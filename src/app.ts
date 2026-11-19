@@ -13,9 +13,19 @@ export interface AppDependencies {
   readonly logger: Logger;
 }
 
-/** Writes must be JSON; reads are unaffected. */
+/** Writes with a body must be JSON; bodyless actions such as `/complete` are exempt. */
 function requireJsonContentType(): RequestHandler {
   return (request, _response, next) => {
+    const contentLength = request.headers["content-length"];
+    const hasBody =
+      (contentLength !== undefined && contentLength !== "0") ||
+      request.headers["transfer-encoding"] !== undefined;
+
+    if (!hasBody) {
+      next();
+      return;
+    }
+
     const contentType = request.headers["content-type"] ?? "";
 
     if (contentType.toLowerCase().includes("application/json")) {

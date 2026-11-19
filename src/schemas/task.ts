@@ -32,3 +32,15 @@ export const createTaskSchema = z.strictObject({
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 
 export const taskIdSchema = z.uuid();
+
+export const updateTaskSchema = z
+  .strictObject({
+    title: titleSchema.optional(),
+    description: descriptionSchema.optional(),
+  })
+  .refine(
+    (value) => value.title !== undefined || value.description !== undefined,
+    { message: "At least one of title or description is required" },
+  );
+
+export type UpdateTaskInput = z.infer<typeof updateTaskSchema>;
