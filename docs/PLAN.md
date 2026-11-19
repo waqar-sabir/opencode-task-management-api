@@ -16,10 +16,10 @@
 | Implementation plan | Approved (this document) |
 | Phase 0 — scaffold and tooling | **Complete** |
 | Application code | Placeholder `src/server.ts` only |
-| `package.json` / lockfile | Present; lockfile not yet committed |
+| `package.json` / lockfile | Present and committed |
 | Tests | Harness test only |
 | Database | **None** |
-| Git repository | Not initialized |
+| Git repository | Initialized on `main`; `origin` configured |
 
 Phase 0 is complete. Each later gate must pass before the next phase begins.
 
