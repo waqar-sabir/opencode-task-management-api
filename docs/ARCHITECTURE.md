@@ -210,8 +210,9 @@ Conventions:
 1. **Request ID.** Read `X-Request-Id` if present; otherwise generate a UUID. Echo it in
    the response header and attach it to the request-scoped logger.
 2. **Body parsing.** `express.json({ limit: "100kb", strict: true })`.
-3. **Content-type check.** `POST` and `PATCH` require `application/json`; otherwise
-   `415 UNSUPPORTED_MEDIA_TYPE`.
+3. **Content-type check.** `POST` and `PATCH` with a body require
+   `application/json`; otherwise `415 UNSUPPORTED_MEDIA_TYPE`. Bodyless actions
+   such as completion are exempt.
 4. **Route matching.** Unknown paths reach the 404 handler and return `NOT_FOUND`.
 5. **Validation.** Zod parses params, body, and query with strict object schemas.
 6. **Service call.** The service generates IDs/timestamps, invokes the repository, and
@@ -511,7 +512,7 @@ RETURNING *;
 | Zod validation | `400 VALIDATION_ERROR` with `details` |
 | Malformed JSON body | `400 VALIDATION_ERROR` |
 | Body over 100 KB | `413 PAYLOAD_TOO_LARGE` |
-| Missing/wrong content type on write | `415 UNSUPPORTED_MEDIA_TYPE` |
+| Wrong content type on a write body | `415 UNSUPPORTED_MEDIA_TYPE` |
 | Unknown route | `404 NOT_FOUND` |
 | Missing task | `404 NOT_FOUND` |
 | SQLite busy/locked | `503 STORAGE_UNAVAILABLE` |
@@ -589,7 +590,8 @@ business rules.
 ### 8.4 HTTP details
 
 - `express.json({ limit: "100kb", strict: true })` rejects oversized or non-object JSON.
-- A content-type guard runs before body validation for `POST`/`PATCH`.
+- A content-type guard runs before body validation for `POST`/`PATCH` when a body
+  is present; bodyless actions skip it.
 - `X-Request-Id` is echoed or generated.
 - Responses use `application/json; charset=utf-8`.
 - `204` responses have no body.

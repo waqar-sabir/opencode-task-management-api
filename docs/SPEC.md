@@ -1,7 +1,7 @@
 # Task Management API — Specification
 
-**Status:** Approved v1.0 — implementation not started
-**Date:** 2026-11-18
+**Status:** Approved v1.1 — implementation in progress (Phases 0–3 complete)
+**Date:** 2026-11-18 (v1.1: 2026-11-19)
 **Scope:** Single-user local HTTP API
 **Related documents:** [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`PLAN.md`](./PLAN.md)
 
@@ -200,7 +200,9 @@ create ──► todo ──POST /complete──► completed
 - CORS: none
 - Response bodies are UTF-8 JSON except `204 No Content`.
 - Single-task responses return the task object directly; list responses use a page envelope.
-- `POST` and `PATCH` require `Content-Type: application/json`.
+- `POST` and `PATCH` requests that carry a body require
+  `Content-Type: application/json`. Bodyless actions such as
+  `POST /api/v1/tasks/:id/complete` need no content type.
 - Request bodies are limited to 100 KB.
 
 ### 11.2 Endpoints
@@ -329,7 +331,7 @@ Every error response uses:
 | `VALIDATION_ERROR` | `400` | Invalid JSON, body, query, UUID, or field values |
 | `NOT_FOUND` | `404` | Valid UUID with no task; unknown route |
 | `PAYLOAD_TOO_LARGE` | `413` | Request body over 100 KB |
-| `UNSUPPORTED_MEDIA_TYPE` | `415` | `POST`/`PATCH` without `application/json` |
+| `UNSUPPORTED_MEDIA_TYPE` | `415` | `POST`/`PATCH` with a body but without `application/json` |
 | `STORAGE_UNAVAILABLE` | `503` | SQLite busy/locked beyond the configured timeout |
 | `INTERNAL_ERROR` | `500` | Unexpected failure; details are logged, never returned |
 
@@ -353,7 +355,7 @@ stack traces, file paths, or task content.
 | `order` | `asc`, `desc` | `400` |
 | Query string | Only the parameters above | `400` |
 | Body size | ≤ 100 KB | `413` |
-| Content type | `application/json` for `POST`/`PATCH` | `415` |
+| Content type | `application/json` for `POST`/`PATCH` bodies | `415` |
 
 ---
 
@@ -438,7 +440,8 @@ stack traces, file paths, or task content.
 - **C4** Omitted description becomes `""`; 2000 code points succeed; 2001 return `400`.
 - **C5** Client-supplied `id`, `status`, `createdAt`, `updatedAt`, or `completedAt` returns `400`.
 - **C6** Duplicate titles are accepted.
-- **C7** Malformed JSON returns `400`; non-JSON content type returns `415`; bodies over 100 KB return `413`.
+- **C7** Malformed JSON returns `400`; a non-JSON content type on a request body
+  returns `415`; bodies over 100 KB return `413`.
 - **C8** The task is immediately retrievable by ID and present in list results.
 
 ### List
@@ -555,6 +558,9 @@ stack traces, file paths, or task content.
 ## 16. Change control
 
 - This specification is approved for v1.
+- **v1.1 (2026-11-19):** `POST`/`PATCH` require `application/json` only when the
+  request carries a body. Bodyless actions such as task completion no longer
+  require a content type. Affects §11.1, §11.10, §11.11, and C7.
 - Any change to HTTP behavior, data fields, status semantics, search behavior, or limits
   requires a specification update and re-approval.
 - Implementation phases and task ordering may change without altering this contract.
