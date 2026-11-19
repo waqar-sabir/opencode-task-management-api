@@ -15,10 +15,10 @@
 | Technical architecture | Approved (`ARCHITECTURE.md`) |
 | Implementation plan | Approved (this document) |
 | Phase 0 — scaffold and tooling | **Complete** |
-| Application code | Persistence layer; HTTP not started |
+| Application code | Persistence layer + create/detail/list HTTP API |
 | `package.json` / lockfile | Present and committed |
-| Tests | 53 tests across config, repository, migrations, mapper, and persistence |
-| Database | Schema v1; no runtime database file |
+| Tests | 100 tests: unit (config, repository, migrations, mapper) and HTTP integration |
+| Database | Schema v1; runtime file at `DATABASE_PATH` |
 | Git repository | Initialized on `main`; `origin` configured |
 
 Phase 0 is complete. Each later gate must pass before the next phase begins.
@@ -187,40 +187,40 @@ handling.
 
 ### Tasks
 
-- [ ] Implement `src/schemas/task.ts`:
+- [x] Implement `src/schemas/task.ts`:
       - create schema with strict keys;
       - title trim and code-point length;
       - description default and code-point length;
       - UUID param schema.
-- [ ] Implement `src/schemas/list-tasks.ts`:
+- [x] Implement `src/schemas/list-tasks.ts`:
       - `q`, `status`, `page`, `limit`, `sort`, `order`;
       - defaults and strict unknown-key rejection;
       - coordinate with Express query parsing for repeated values.
-- [ ] Implement `src/services/tasks.ts`:
+- [x] Implement `src/services/tasks.ts`:
       - `createTask` generates UUID and timestamps;
       - `getTask` and `listTasks`;
       - `NotFound` mapping.
-- [ ] Implement `src/middleware/error-handler.ts`:
+- [x] Implement `src/middleware/error-handler.ts`:
       - standard envelope;
       - Zod, JSON parser, payload, media-type, not-found, SQLite, and unknown mapping.
-- [ ] Implement `src/middleware/request-logger.ts`:
+- [x] Implement `src/middleware/request-logger.ts`:
       - request ID;
       - JSON request log;
       - no body, title, description, or query values.
-- [ ] Implement `src/app.ts`:
+- [x] Implement `src/app.ts`:
       - `express.json({ limit: "100kb", strict: true })`;
       - content-type guard for writes;
       - routes;
       - 404 handler;
       - error middleware.
-- [ ] Implement `src/routes/tasks.ts` for:
+- [x] Implement `src/routes/tasks.ts` for:
       - `POST /api/v1/tasks`;
       - `GET /api/v1/tasks/:id`;
       - `GET /api/v1/tasks`.
-- [ ] Implement `src/server.ts`:
+- [x] Implement `src/server.ts`:
       - config, DB, migrations, repository, app, listen;
       - startup logging.
-- [ ] Integration-test with Supertest:
+- [x] Integration-test with Supertest:
       - create success and defaults;
       - title/description validation;
       - unknown fields and client-supplied server fields;
@@ -233,10 +233,10 @@ handling.
 
 ### Gate
 
-- [ ] C1–C8, D1–D3, and L1–L9 pass through HTTP.
-- [ ] Error envelope is consistent.
-- [ ] No content appears in request logs.
-- [ ] `npm run verify` passes.
+- [x] C1–C8, D1–D3, and L1–L9 pass through HTTP.
+- [x] Error envelope is consistent.
+- [x] No content appears in request logs.
+- [x] `npm run verify` passes.
 
 **Demo:** create, retrieve, and list tasks with curl/Supertest.
 

@@ -1,0 +1,62 @@
+import express, { type Express, type RequestHandler } from "express";
+import type { Logger } from "pino";
+
+import { AppError } from "./errors.js";
+import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
+import { requestLogger } from "./middleware/request-logger.js";
+import type { TaskRepository } from "./repositories/task-repository.js";
+import { createTaskRouter } from "./routes/tasks.js";
+import { createTaskService } from "./services/tasks.js";
+
+export interface AppDependencies {
+  readonly repository: TaskRepository;
+  readonly logger: Logger;
+}
+
+/** Writes must be JSON; reads are unaffected. */
+function requireJsonContentType(): RequestHandler {
+  return (request, _response, next) => {
+    const contentType = request.headers["content-type"] ?? "";
+
+    if (contentType.toLowerCase().includes("application/json")) {
+      next();
+      return;
+    }
+
+    next(
+      new AppError(
+        "UNSUPPORTED_MEDIA_TYPE",
+        "Content-Type must be application/json",
+      ),
+    );
+  };
+}
+
+/**
+ * Build the Express app from injected dependencies. Never opens a port and
+ * never touches the database directly.
+ */
+export function createApp({ repository, logger }: AppDependencies): Express {
+  const app = express();
+
+  app.disable("x-powered-by");
+  app.use(requestLogger(logger));
+
+  app.use((request, response, next) => {
+    if (request.method === "POST" || request.method === "PATCH") {
+      requireJsonContentType()(request, response, next);
+      return;
+    }
+    next();
+  });
+
+  app.use(express.json({ limit: "100kb", strict: true }));
+
+  const service = createTaskService(repository);
+  app.use("/api/v1/tasks", createTaskRouter(service));
+
+  app.use(notFoundHandler());
+  app.use(errorHandler(logger));
+
+  return app;
+}
