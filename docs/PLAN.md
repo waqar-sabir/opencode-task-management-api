@@ -1,6 +1,6 @@
 # Task Management API — Implementation Plan
 
-**Status:** Approved v1.0 — documentation only; no application code exists
+**Status:** Approved v1.0 — all phases complete; verified 2026-11-19
 **Date:** 2026-11-18
 **Scope:** Single-user local HTTP API
 **Related documents:** [`SPEC.md`](./SPEC.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md)
@@ -15,10 +15,13 @@
 | Technical architecture | Approved (`ARCHITECTURE.md`) |
 | Implementation plan | Approved (this document) |
 | Phase 0 — scaffold and tooling | **Complete** |
+| Phases 1–5 | **Complete** |
 | Application code | Complete v1 API: task lifecycle, health check, graceful shutdown |
 | `package.json` / lockfile | Present and committed |
-| Tests | 149 tests: unit (config, repository, migrations, mapper, error handler) and HTTP/persistence/shutdown integration |
+| Tests | 151 tests: unit (config, repository, migrations, mapper, connection, error handler) and HTTP/persistence/health/shutdown integration |
 | Database | Schema v1; runtime file at `DATABASE_PATH`, mode `0600` inside a `0700` directory |
+| Benchmark | 10,000 tasks; CRUD p95 ≤ 4.3 ms, list/search p95 ≤ 13.3 ms |
+| Acceptance record | `docs/ACCEPTANCE.md` |
 | Git repository | Initialized on `main`; `origin` configured |
 
 Phases 0–4 are complete. Each later gate must pass before the next phase begins.
@@ -334,12 +337,12 @@ handling.
 
 ### Tasks
 
-- [ ] Walk through every acceptance criterion in `SPEC.md` §14 and record the result.
-- [ ] Run `npm run test:coverage`; core logic ≥ 85%.
-- [ ] Run a manual benchmark with 10,000 seeded tasks:
+- [x] Walk through every acceptance criterion in `SPEC.md` §14 and record the result.
+- [x] Run `npm run test:coverage`; core logic ≥ 85%.
+- [x] Run a manual benchmark with 10,000 seeded tasks:
       - CRUD p95 ≤ 100 ms;
       - list/search p95 ≤ 200 ms.
-- [ ] Write the full README:
+- [x] Write the full README:
       - prerequisites and Node version;
       - install, dev, build, start, verify;
       - environment variables;
@@ -347,12 +350,12 @@ handling.
       - search/filter/sort examples;
       - database location, reset, and backup notes;
       - localhost/no-auth security warning.
-- [ ] Re-verify `AGENTS.md` against the final implementation; correct drift.
-- [ ] Review `SPEC.md`, `ARCHITECTURE.md`, and `PLAN.md` against the implementation;
+- [x] Re-verify `AGENTS.md` against the final implementation; correct drift.
+- [x] Review `SPEC.md`, `ARCHITECTURE.md`, and `PLAN.md` against the implementation;
       correct drift.
-- [ ] Confirm `.gitignore` covers `data/`, database files, WAL/SHM files, `.env`,
+- [x] Confirm `.gitignore` covers `data/`, database files, WAL/SHM files, `.env`,
       `node_modules/`, `dist/`, and `coverage/`.
-- [ ] Confirm no secrets, real data, or out-of-scope features exist.
+- [x] Confirm no secrets, real data, or out-of-scope features exist.
 
 ### Gate
 
@@ -375,15 +378,18 @@ handling.
 
 | Area | Location | What it proves |
 | --- | --- | --- |
-| Schemas | `tests/unit/schemas/` | Strict keys, defaults, trimming, code-point limits, query rules |
-| Services | `tests/unit/services/` | ID/timestamp generation, not-found translation, patch merging |
+| Config | `tests/unit/config.test.ts` | Defaults, coercion, fail-fast validation, loopback detection |
+| Schemas | `tests/integration/tasks.test.ts` | Strict keys, defaults, trimming, code-point limits, query rules |
+| Services | `tests/integration/tasks.test.ts` | ID/timestamp generation, not-found translation, patch merging |
 | Repository | `tests/unit/db/task-repository.test.ts` | SQL, search, filtering, sorting, pagination, idempotency |
 | Migrations | `tests/unit/db/migrations.test.ts` | `user_version`, idempotency, newer-version failure |
 | Row mapper | `tests/unit/db/row-mapper.test.ts` | Snake_case mapping, status validation, null completion |
+| Connection | `tests/unit/db/connection.test.ts` | Permissions, WAL pragmas, corrupt-file failure, idempotent close |
 | Error mapping | `tests/unit/middleware/error-handler.test.ts` | 400/404/413/415/500/503 behavior |
 | HTTP integration | `tests/integration/tasks.test.ts` | Full request/response contract |
-| Persistence | `tests/integration/persistence.test.ts` | Close/reopen durability |
-| Health/shutdown | `tests/integration/health.test.ts` | 200/503 and clean close |
+| Persistence | `tests/integration/persistence.test.ts` | Close/reopen durability, delete-and-recreate |
+| Health | `tests/integration/health.test.ts` | 200/503 and unversioned mount |
+| Shutdown | `tests/integration/shutdown.test.ts` | Drain, database close, reopenable file, idempotent stop |
 
 ### 11.2 Commands
 
@@ -392,6 +398,7 @@ npm run test
 npm run test:watch
 npm run test:coverage
 npm run verify
+npm run benchmark
 npx vitest run tests/integration/tasks.test.ts -t "creates a task"
 npx vitest run tests/integration/tasks.test.ts
 ```

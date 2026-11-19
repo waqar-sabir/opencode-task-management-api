@@ -98,6 +98,43 @@ describe("persistence", () => {
     closeDatabase(second);
   });
 
+  it("recreates an empty migrated database after the file is deleted", async () => {
+    const path = temporaryDatabasePath();
+
+    const first = openDatabase(path);
+    migrate(first);
+    await new SqliteTaskRepository(first).create({
+      id: randomUUID(),
+      title: "About to vanish",
+      description: "",
+      createdAt: "2026-11-19T10:00:00.000Z",
+      updatedAt: "2026-11-19T10:00:00.000Z",
+    });
+    closeDatabase(first);
+
+    rmSync(path, { force: true });
+    rmSync(`${path}-wal`, { force: true });
+    rmSync(`${path}-shm`, { force: true });
+
+    const second = openDatabase(path);
+    expect(migrate(second)).toBe(1);
+    expect(
+      second.prepare("PRAGMA user_version").get() as { user_version: number },
+    ).toMatchObject({ user_version: 1 });
+
+    const repository = new SqliteTaskRepository(second);
+    await expect(
+      repository.list({
+        page: 1,
+        limit: 20,
+        sort: "createdAt",
+        order: "desc",
+      }),
+    ).resolves.toEqual({ items: [], total: 0 });
+
+    closeDatabase(second);
+  });
+
   it("does not touch ./data when driven by a temporary path", async () => {
     const path = temporaryDatabasePath();
     const database = openDatabase(path);

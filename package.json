@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "benchmark": "tsx scripts/benchmark.ts",
     "verify": "npm run lint && npm run typecheck && npm run test"
   },
   "dependencies": {

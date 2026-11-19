@@ -48,6 +48,27 @@ describe("openDatabase", () => {
     }
   });
 
+  it("configures WAL, busy timeout, and foreign keys on file databases", () => {
+    const root = temporaryDirectory();
+    const database = openDatabase(join(root, "tasks.db"));
+
+    expect(
+      database.prepare("PRAGMA journal_mode").get() as { journal_mode: string },
+    ).toMatchObject({ journal_mode: "wal" });
+    expect(
+      database.prepare("PRAGMA busy_timeout").get() as {
+        timeout: number;
+      },
+    ).toMatchObject({ timeout: 5000 });
+    expect(
+      database.prepare("PRAGMA foreign_keys").get() as {
+        foreign_keys: number;
+      },
+    ).toMatchObject({ foreign_keys: 1 });
+
+    closeDatabase(database);
+  });
+
   it("leaves an existing directory's permissions alone", () => {
     const root = temporaryDirectory();
     const path = join(root, "tasks.db");

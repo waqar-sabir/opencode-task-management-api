@@ -1,6 +1,6 @@
 # Task Management API — Specification
 
-**Status:** Approved v1.1 — implementation in progress (Phases 0–3 complete)
+**Status:** Approved v1.1 — v1 implementation complete and verified
 **Date:** 2026-11-18 (v1.1: 2026-11-19)
 **Scope:** Single-user local HTTP API
 **Related documents:** [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`PLAN.md`](./PLAN.md)

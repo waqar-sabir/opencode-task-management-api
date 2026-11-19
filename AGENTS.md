@@ -24,28 +24,33 @@ Use these unless the user directs otherwise:
 | `test` | `vitest run` |
 | `test:watch` | `vitest` |
 | `test:coverage` | `vitest run --coverage` |
+| `benchmark` | `tsx scripts/benchmark.ts` |
 | `verify` | lint, then typecheck, then test |
 
 - Run `npm run verify` before claiming work is done; otherwise state that it was not run.
 - Single test: `npx vitest run tests/integration/tasks.test.ts -t "creates a task"`.
 - Single file: `npx vitest run tests/integration/tasks.test.ts`.
+- Benchmark: `npm run benchmark` seeds 10,000 tasks in a temporary database and checks p95 budgets. It never writes to `./data`.
 
 ## Structure and boundaries
 ```
 src/
   server.ts      # load config, open DB, migrate, app.listen — never imported by tests
   app.ts         # builds and returns the Express app
+  shutdown.ts    # HTTP drain + database close, used by server.ts
   config.ts      # the only module that reads process.env
   errors.ts      # AppError + stable error codes
-  routes/        # HTTP parsing and status codes only
+  routes/        # HTTP parsing and status codes only (tasks, health)
   schemas/       # Zod request/response schemas + z.infer types
   services/      # business rules, framework-free
   repositories/  # storage interface only
   db/            # connection, migrations, row mapper, SQLite repository
   middleware/    # error handler, request logging
+scripts/
+  benchmark.ts   # manual 10k-task performance run; excluded from the build
 tests/
-  unit/          # schemas, services, repository, migrations, mapper, error handler
-  integration/   # Supertest HTTP behavior, persistence, health
+  unit/          # schemas, services, repository, migrations, mapper, connection, error handler
+  integration/   # Supertest HTTP behavior, persistence, health, shutdown
 ```
 
 - Import `app` from `src/app.ts` in Supertest tests; never bind a port in tests.
@@ -63,6 +68,6 @@ tests/
 - Cover validation failures and not-found alongside happy paths.
 
 ## Repo hygiene
-- Not a git repository yet. Ask before running `git init` or committing.
-- Never commit `.env`, `dist/`, `node_modules/`, `data/`, database files, WAL side files, or coverage output. Add `.env.example` when the first env var appears.
+- The repository is initialized on `main` with `origin` configured. Commit and push approved phase work after its gate passes; ask before rewriting history, force-pushing, or starting unrelated commits.
+- Never commit `.env`, `dist/`, `node_modules/`, `data/`, database files, WAL side files, or coverage output. `.env.example` documents every variable.
 - Keep `README.md` focused on setup, run, and test instructions; keep agent-specific rules only in this file.
