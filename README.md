@@ -4,14 +4,15 @@ A single-user task management API that runs locally with Node.js 24 and one
 SQLite file. No accounts, no external services, no build step required in
 development.
 
-> **Status:** v1 complete. See [`docs/SPEC.md`](docs/SPEC.md) for the behavior
+> **Status:** v1.1 complete. See [`docs/SPEC.md`](docs/SPEC.md) for the behavior
 > contract and [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) for the verification
-> record.
+> record. The dashboard is a companion React SPA in `dashboard/`.
 
 ## Requirements
 
 - Node.js 24 LTS (pinned in `.nvmrc`; `package.json` requires `>=24`)
 - npm (the lockfile is committed)
+- A running API server (default `http://127.0.0.1:3000`)
 
 ## Setup
 
@@ -26,6 +27,12 @@ defaults, copy the example and edit it:
 cp .env.example .env
 ```
 
+### Dashboard setup
+
+```bash
+npm ci --prefix dashboard
+```
+
 ## Configuration
 
 | Variable | Default | Accepted values |
@@ -36,26 +43,44 @@ cp .env.example .env
 | `DATABASE_PATH` | `./data/tasks.db` | file path, or `:memory:` for tests |
 | `LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn`, `error`, `fatal` |
 
+### Dashboard proxy environment
+
+| Variable | Default | Accepted values |
+| --- | --- | --- |
+| `TASK_API_URL` | `http://127.0.0.1:3000` | API base URL, e.g. `http://127.0.0.1:3100` |
+| `VITE_API_BASE_URL` | `/api/v1` | API path prefix; absolute URL supported |
+| `VITE_HEALTH_URL` | `/healthz` | Health endpoint path |
+
 Invalid configuration fails fast at startup with a clear error.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `npm run dev` | Start with `tsx watch` |
-| `npm run build` | Compile to `dist/` |
+| `npm run dev` | Start API with `tsx watch` |
+| `npm --prefix dashboard run dev` | Start dashboard Vite on 5173, proxying the API |
+| `npm run build` | Compile API to `dist/` |
+| `npm --prefix dashboard run build` | Build dashboard static bundle |
 | `npm start` | Run the compiled build (run `npm run build` first) |
-| `npm run lint` | ESLint |
-| `npm run format` | Prettier write |
+| `npm run lint` | ESLint (root; ignores `dashboard/`) |
+| `npm --prefix dashboard run lint` | Dashboard ESLint |
+| `npm run format` | Prettier write (root; ignores `dashboard/`) |
+| `npm --prefix dashboard run format` | Dashboard Prettier |
 | `npm run format:check` | Prettier check |
+| `npm run format:check:dashboard` | Dashboard format check |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm test` | Run the test suite once |
-| `npm run test:watch` | Tests in watch mode |
-| `npm run test:coverage` | Coverage report with 85% thresholds |
+| `npm --prefix dashboard run typecheck` | Dashboard typecheck |
+| `npm test` | Run the API test suite once |
+| `npm --prefix dashboard run test` | Run the dashboard test suite |
+| `npm run test:coverage` | Coverage report with 85% API thresholds |
+| `npm run test:dashboard:coverage` | Dashboard coverage with 80% thresholds |
+| `npm run verify` | lint → typecheck → test (API) |
+| `npm run verify:dashboard` | lint → typecheck → test (dashboard) |
+| `npm run verify:all` | API and dashboard lint, typecheck, and tests |
 | `npm run benchmark` | Seed 10,000 tasks and measure API latency |
-| `npm run verify` | lint → typecheck → test |
 
-Run `npm run verify` before opening a change.
+Run `npm run verify` before opening a change. Run `npm run verify:all` to verify both
+the API and the dashboard.
 
 ## Run
 
@@ -244,28 +269,37 @@ database, point `DATABASE_PATH` at the copy.
 Schema migrations run automatically at startup. A database written by a newer
 build fails startup with a clear version error instead of being modified.
 
-## Test
+## Dashboard
+
+The dashboard is a same-origin React SPA served from `dashboard/` and built with
+Vite. It consumes the documented `/api/v1` endpoints and never opens SQLite.
+
+### Starting the dashboard
 
 ```bash
-npm test
-npx vitest run tests/integration/tasks.test.ts
-npx vitest run tests/integration/tasks.test.ts -t "creates a task"
-npm run test:coverage
+npm --prefix dashboard run dev
 ```
 
-Tests run offline against a fresh database per test. Most use `:memory:`; only
-migration, persistence, permission, and shutdown tests use a temporary file
-database. No test touches `./data`.
+The dashboard starts on `http://127.0.0.1:5173` and proxies `/api` and `/healthz`
+to the API (default `http://127.0.0.1:3000`). Open `http://127.0.0.1:5173` in
+your browser.
 
-## Benchmark
+### Dashboard features
 
-```bash
-npm run benchmark
-```
-
-Seeds 10,000 synthetic tasks in a temporary database, exercises every endpoint
-over real HTTP, and checks p95 against the specification budgets: CRUD ≤ 100 ms,
-list/search ≤ 200 ms. The temporary database is removed afterwards.
+- List tasks with title, description, status, and timestamps
+- Create and edit tasks via a modal form
+- Complete and delete tasks with confirmation dialogs
+- Search over titles and descriptions (300 ms debounced)
+- Filter by todo/completed status
+- Sort by createdAt, updatedAt, or title; ascending or descending
+- Pagination with 10, 20, 50, or 100 per page
+- Summary cards with total, to-do, completed, and completion percentage
+- Health indicator with manual recheck
+- Responsive layout from 360 px upward; light and dark themes
+- Reduced-motion preference respected
+- Accessible dialogs with focus trap, Escape, and focus restoration
+- Live-region toasts for mutation results
+- No task content persisted in browser storage, cookies, or the URL
 
 ## Documentation
 
@@ -273,6 +307,8 @@ list/search ≤ 200 ms. The temporary database is removed afterwards.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — design and boundaries
 - [`docs/PLAN.md`](docs/PLAN.md) — delivery plan and phase gates
 - [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) — criterion-by-criterion verification
+- [`dashboard/README.md`](dashboard/README.md) — dashboard setup and features
+- `docs/dashboard.png` — screenshot of the dashboard (desktop, light theme)
 
 ## Security
 
@@ -281,3 +317,7 @@ can reach the port can read and modify every task. Do not expose it to a network
 A non-loopback `HOST` logs a warning at startup. Logs contain request ID, method,
 path, status, and duration, but never task content, request bodies, or query
 strings.
+
+The dashboard shares the same-origin boundary. It never writes task content to
+`localStorage`, `sessionStorage`, cookies, or the URL, and it adds no CORS
+headers to the API.

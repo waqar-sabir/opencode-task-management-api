@@ -1,15 +1,16 @@
 # Task Management API — Architecture
 
-**Status:** Approved v1.0 — implemented; verified 2026-11-19
-**Date:** 2026-11-18
-**Scope:** Single-user local HTTP API
-**Related documents:** [`SPEC.md`](./SPEC.md), [`PLAN.md`](./PLAN.md)
+**Status:** Approved v1.1 — implemented; verified 2026-11-22
+**Date:** 2026-11-18 (v1.1 dashboard update 2026-11-22)
+**Scope:** Single-user local HTTP API with a same-origin React dashboard
+**Related documents:** [`SPEC.md`](./SPEC.md), [`PLAN.md`](./PLAN.md), [`ACCEPTANCE.md`](./ACCEPTANCE.md)
 
 ---
 
 ## 1. Context and constraints
 
-The system is a local, single-process HTTP API backed by one SQLite file. It has no
+The system is a local, single-process HTTP API backed by one SQLite file, plus a
+separate React dashboard that consumes the API from the same origin. It has no
 authentication, no external services, and no multi-instance coordination. The
 architecture is optimized for correctness, explainability, and low operational overhead,
 not for horizontal scale.
@@ -23,15 +24,22 @@ Hard constraints from the approved specification:
 - Statuses are only `todo` and `completed`; completion is terminal.
 - No ORM, no CORS, no rate limiting, and no background workers.
 - Default network bind is `127.0.0.1`.
+- The dashboard is a static React SPA served separately and proxied to the API; it is
+  never bundled into the Express process.
 
 ---
 
 ## 2. Architecture overview
 
 ```text
-HTTP client (curl, script, future UI)
-        │
-        ▼
+┌──────────────────────────────┐      ┌──────────────────────────────┐
+│ Browser: React dashboard     │      │ HTTP client (curl, script)   │
+│ dashboard/ (Vite SPA)        │      │                              │
+└──────────────┬───────────────┘      └──────────────┬───────────────┘
+               │ same-origin /api, /healthz          │ direct HTTP
+               │ (Vite or reverse-proxy forward)     │
+               └──────────────────┬──────────────────┘
+                                  ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ Express app (src/app.ts)                                    │
 │                                                             │
@@ -74,6 +82,12 @@ Key structural decisions:
   SQL. No Express types cross into services or the repository.
 - **One error path.** A single error middleware converts validation, domain, HTTP parser,
   and SQLite failures into the response envelope.
+- **Separate clients, one contract.** The API is the only writer of task data. The
+  dashboard is a static React SPA that uses the documented `/api/v1` endpoints and never
+  opens SQLite. It is a client, not a second server or a second backend.
+- **Same-origin by proxy.** The API sends no CORS headers. Vite forwards `/api` and
+  `/healthz` in development and preview, and a production deployment must do the same at
+  its reverse proxy. Express serves no HTML and no dashboard assets.
 
 ---
 
@@ -88,8 +102,10 @@ Key structural decisions:
 | Logging | pino + pino-http | Structured JSON, low overhead |
 | Database | `node:sqlite` (`DatabaseSync`) | Built-in, synchronous, no native add-on |
 | Tests | Vitest + Supertest | Fast unit/integration tests without network ports |
+| Dashboard | React 19 + Vite | Small SPA with fast dev server, proxy support, and static output |
+| Dashboard tests | Vitest + Testing Library + jsdom | Component behavior against a mocked `fetch`, no live API |
 | Dev runner | tsx | Direct TypeScript execution with watch mode |
-| Build | tsc | Plain JavaScript output in `dist/` |
+| Build | tsc; Vite for the dashboard | Plain JavaScript in `dist/`; static dashboard bundle |
 | Lint/format | ESLint + Prettier | Consistent style and static checks |
 | Package manager | npm | Committed `package-lock.json` |
 
@@ -117,6 +133,19 @@ Express 5 propagates rejected promises from async handlers to error middleware, 
 API can use async route handlers without a wrapper. The framework surface is small and
 well understood. No CORS, static files, sessions, or view engine is configured.
 
+### 3.4 Why a separate React SPA
+
+The dashboard lives in `dashboard/` and builds to static files. Keeping it out of the API
+process preserves the single-purpose backend, keeps API tests independent of UI tooling,
+and avoids adding Express static serving or a template engine. React 19 and Vite provide
+a small component model and a fast development loop without a UI framework or design
+system. The cost is a second install, a second verification command, and a deployment
+step that serves static assets and proxies `/api` and `/healthz`.
+
+CORS remains disabled deliberately. Same-origin proxying is simpler to reason about and
+does not widen the API’s network exposure. A deployment that cannot proxy must add CORS
+at a reverse proxy and update `SPEC.md`; that is not part of v1.3.
+
 ---
 
 ## 4. Component responsibilities
@@ -139,6 +168,10 @@ well understood. No CORS, static files, sessions, or view engine is configured.
 | `src/middleware/request-logger.ts` | Assign/propagate request ID, emit request logs | Log body, title, description, or `q` |
 | `src/middleware/error-handler.ts` | Convert errors to the standard envelope and status | Leak stack traces or SQL |
 | `src/errors.ts` | `AppError` and stable error codes | Contain transport-specific data |
+| `dashboard/src/App.tsx` | Dashboard state, filters, mutations, dialogs, composition | Read SQLite or bypass the API |
+| `dashboard/src/api/client.ts` | Typed `/api/v1` calls, query building, error-envelope parsing | Invent endpoints or cache task content |
+| `dashboard/src/components/` | Accessible presentational UI: header, toolbar, list, rows, modals, toasts | Own server state or fetch directly |
+| `dashboard/src/hooks/` | Fetch lifecycle, debounce, counts, health, toasts | Contain domain rules beyond presentation |
 
 ---
 
@@ -160,7 +193,27 @@ task-management-api/
 ├── docs/
 │   ├── SPEC.md
 │   ├── ARCHITECTURE.md
-│   └── PLAN.md
+│   ├── PLAN.md
+│   ├── ACCEPTANCE.md
+│   └── dashboard.png
+├── dashboard/
+│   ├── README.md
+│   ├── index.html
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── vite.config.ts
+│   ├── tsconfig.json
+│   ├── eslint.config.js
+│   ├── public/
+│   └── src/
+│       ├── main.tsx
+│       ├── App.tsx
+│       ├── styles.css
+│       ├── api/          # typed client, types, error mapping
+│       ├── components/   # header, stats, toolbar, list, dialogs, toasts
+│       ├── hooks/        # tasks, counts, health, debounce, toasts
+│       ├── lib/          # formatting and form validation
+│       └── test/         # fixtures and jsdom setup
 ├── src/
 │   ├── app.ts
 │   ├── server.ts
@@ -192,16 +245,24 @@ task-management-api/
 │       ├── tasks.test.ts
 │       └── persistence.test.ts
 ├── data/                  # runtime only; gitignored
-└── dist/                  # build output; gitignored
+└── dist/                  # API build output; gitignored
 ```
+
+`dashboard/dist/` and `dashboard/coverage/` are also generated and gitignored. The
+dashboard has its own `package.json`, lockfile, TypeScript config, ESLint config, and
+Vite config; it does not share the API’s build.
 
 Conventions:
 
 - ESM with `"type": "module"`.
-- `module` and `moduleResolution` set to `NodeNext`; relative imports use `.js` suffixes.
+- `module` and `moduleResolution` set to `NodeNext` for the API; relative imports use
+  `.js` suffixes.
 - `strict` and `noUncheckedIndexedAccess` enabled.
 - `tsconfig.build.json` excludes tests and emits to `dist/`.
+- The dashboard uses Vite’s bundler resolution and JSX, with its own strict
+  `tsconfig.json`; it imports without `.js` suffixes.
 - No application logic in `index.ts`-style entrypoints; `server.ts` is the process entry.
+- The dashboard never imports from `src/`; the HTTP contract is the only boundary.
 
 ---
 
@@ -657,6 +718,9 @@ Controls:
 - Do not log task content or search terms.
 - Return generic `500` responses; log details server-side.
 - Do not enable CORS or serve HTML.
+- Serve the dashboard as a separate same-origin client behind a proxy; the API adds no
+  CORS headers and no static-file route.
+- Do not persist task content in browser storage, cookies, or the URL.
 - Do not commit `.env`, database files, or WAL side files.
 
 If the API must be exposed beyond localhost, add at minimum authentication, TLS
@@ -715,6 +779,8 @@ and WAL checkpoint tuning.
 | Unit: error mapper | Validation, busy/locked, unknown errors | Direct mapper calls |
 | Integration | Full HTTP behavior via Supertest | App with `:memory:` repository |
 | Persistence | Survives close/reopen | Temporary directory + file DB |
+| Dashboard unit | API client, error parsing, formatting, form validation | Mocked `fetch`; pure functions |
+| Dashboard component | Loading, search, filter, sort, pagination, CRUD, dialogs, errors | Testing Library + jsdom with a mocked `fetch` |
 
 ### 13.2 Isolation
 
@@ -735,11 +801,27 @@ and WAL checkpoint tuning.
 
 ### 13.4 Coverage and commands
 
-- Core logic target: services + repository + row mapper ≥ 85%.
-- `npm run test` runs the suite once.
-- `npm run test:coverage` produces the coverage report and enforces thresholds.
-- `npm run verify` runs lint, typecheck, and tests in that order.
+- API core logic target: services + repository + row mapper ≥ 85%.
+- Dashboard coverage target: `src/api` and `src/lib` ≥ 80% for statements, branches,
+  functions, and lines.
+- `npm run test` runs the API suite once.
+- `npm run test:coverage` produces the API coverage report and enforces thresholds.
+- `npm run test:dashboard` runs the dashboard suite.
+- `npm run verify` runs API lint, typecheck, and tests in that order.
+- `npm run verify:dashboard` runs dashboard lint, typecheck, and tests.
+- `npm run verify:all` runs both verifications.
 - Single test: `npx vitest run tests/integration/tasks.test.ts -t "creates a task"`.
+- Single dashboard test: `npm --prefix dashboard run test -- src/App.test.tsx`.
+
+### 13.5 Dashboard test isolation
+
+- Every dashboard test renders a fresh tree and unmounts it in cleanup.
+- `fetch` is mocked per test; no live API, database, or network is used.
+- Fixtures are plain task objects in `src/test/fixtures.ts`.
+- Timers are controlled where debounce behavior matters.
+- jsdom provides the DOM; no browser automation is required for the automated suite.
+- Manual browser verification against a temporary database is recorded in
+  `ACCEPTANCE.md`; it never touches `./data`.
 
 ---
 
@@ -752,12 +834,22 @@ npm ci
 npm run dev                 # tsx watch src/server.ts
 npm run build
 npm start                   # node dist/server.js
-npm run verify              # lint -> typecheck -> test
+npm run verify              # API: lint -> typecheck -> test
 npm run test:coverage
+
+npm --prefix dashboard ci
+npm run dev:dashboard       # Vite on 5173, proxying to the API
+npm run build:dashboard
+npm run verify:dashboard    # dashboard: lint -> typecheck -> test
+npm run verify:all          # API and dashboard
 ```
 
-- Default URL: `http://127.0.0.1:3000`
+- Default API URL: `http://127.0.0.1:3000`
 - Health: `GET http://127.0.0.1:3000/healthz`
+- Default dashboard URL: `http://127.0.0.1:5173` (preview: `http://127.0.0.1:4173`)
+- Proxy target: `TASK_API_URL`, default `http://127.0.0.1:3000`
+- Dashboard API base: `VITE_API_BASE_URL`, default `/api/v1`
+- Dashboard health URL: `VITE_HEALTH_URL`, default `/healthz`
 - Database: `./data/tasks.db` by default
 - Reset: stop the process, delete `data/`, restart; migrations recreate an empty schema
 - Inspect: use the `sqlite3` CLI if installed; it is not a project dependency
@@ -785,6 +877,11 @@ The README owns the exact setup and curl examples; this document owns the design
 | App wiring | Factory + injection | Module-level singleton | Test isolation; explicit dependencies |
 | Durability | WAL + `synchronous=FULL` | `NORMAL` | Meets the “committed before response” requirement |
 | Timestamps | Millisecond ISO strings | Epoch integers | Human-readable API; sortable text |
+| Dashboard | Separate React 19 + Vite SPA | Server-rendered Express views; bundled UI | Keeps the API single-purpose; fast UI dev loop |
+| Dashboard origin | Same-origin proxy; no CORS | CORS allowlist | No API change; no widened exposure |
+| Dashboard state | In-memory React state | URL or browser storage | Task content is never persisted client-side |
+| Summary counts | Three `limit=1` list calls | New aggregate endpoint | Uses only documented API; no contract change |
+| Dashboard tests | Testing Library + mocked `fetch` | Live API or E2E suite | Deterministic and offline; manual E2E recorded |
 
 ---
 
@@ -803,10 +900,214 @@ The README owns the exact setup and curl examples; this document owns the design
 | Migration error | Startup failure or schema drift | Transactional migrations; version check; tests |
 | Unclean shutdown | WAL recovery or stale files | Signal handlers close server then DB |
 | Body/content-type edge cases | Wrong status codes | Explicit middleware and tests |
+| Dashboard proxy missing in production | Browser requests fail as network errors | Document same-origin requirement; Vite proxy for dev/preview; deployment checklist |
+| Dashboard adds API expectations | Contract drift | Typed client mirrors documented fields; no new endpoints; API tests unchanged |
+| Browser storage leaks task content | Privacy loss on shared machines | No `localStorage`, `sessionStorage`, cookies, or task data in the URL |
+| Modal focus regressions | Keyboard users trapped or lost | Focus trap, Escape, focus restoration tests |
+| Stale list after mutation | UI disagrees with API | Refetch list and counts after every successful mutation |
+| Debounced search races | Older response overwrites newer one | `AbortController` per request; debounce 300 ms |
 
 ---
 
-## 17. Deferred work
+## 17. Dashboard architecture
+
+### 17.1 Position in the system
+
+The dashboard is a static React single-page application in `dashboard/`. It is built by
+Vite into `dashboard/dist/` and served by any static host or reverse proxy. It never runs
+inside the API process, never imports API source, and never opens SQLite. Its only
+integration point is the documented HTTP contract:
+
+- `GET /api/v1/tasks`
+- `POST /api/v1/tasks`
+- `GET /api/v1/tasks/:id`
+- `PATCH /api/v1/tasks/:id`
+- `POST /api/v1/tasks/:id/complete`
+- `DELETE /api/v1/tasks/:id`
+- `GET /healthz`
+
+The API gains no route, header, schema, or CORS behavior for the dashboard.
+
+### 17.2 Same-origin and proxy model
+
+Browsers enforce the same-origin policy. Because the API intentionally sends no CORS
+headers, the dashboard must be served from the API’s origin. Vite implements this in
+development and preview:
+
+```ts
+const apiTarget = process.env.TASK_API_URL ?? "http://127.0.0.1:3000";
+
+const proxy = {
+  "/api": { target: apiTarget, changeOrigin: false },
+  "/healthz": { target: apiTarget, changeOrigin: false },
+};
+```
+
+- Dev server: `http://127.0.0.1:5173`.
+- Preview server: `http://127.0.0.1:4173`.
+- `TASK_API_URL` changes the proxy target without changing dashboard code.
+- `VITE_API_BASE_URL` defaults to `/api/v1`; setting it to an absolute URL is supported
+  for a deployment that terminates CORS elsewhere, but that is not the v1.3 default.
+- `VITE_HEALTH_URL` defaults to `/healthz`.
+- A production static host must forward `/api` and `/healthz` to the API. Serving the SPA
+  and API under one hostname is the supported deployment.
+
+Express still does not serve `dashboard/dist/` and does not add static middleware.
+
+### 17.3 Dashboard structure
+
+```text
+dashboard/
+├── index.html
+├── package.json
+├── package-lock.json
+├── vite.config.ts        # React plugin, proxy, Vitest + coverage
+├── tsconfig.json
+├── eslint.config.js
+├── public/
+└── src/
+    ├── main.tsx          # React root
+    ├── App.tsx           # filter state, mutations, dialogs, composition
+    ├── styles.css        # tokens, layout, light/dark, responsive rules
+    ├── api/
+    │   ├── client.ts     # fetch wrapper, endpoint functions, counts, health
+    │   ├── error.ts      # unknown error -> ApiError
+    │   └── types.ts      # Task, page, params, inputs, counts
+    ├── components/
+    │   ├── Header.tsx
+    │   ├── StatsCards.tsx
+    │   ├── Toolbar.tsx
+    │   ├── TaskList.tsx
+    │   ├── TaskRow.tsx
+    │   ├── Pagination.tsx
+    │   ├── Modal.tsx
+    │   ├── TaskFormModal.tsx
+    │   ├── ConfirmDeleteDialog.tsx
+    │   ├── ApiErrorNotice.tsx
+    │   ├── EmptyState.tsx
+    │   ├── Toasts.tsx
+    │   └── Icon.tsx
+    ├── hooks/
+    │   ├── useTasks.ts
+    │   ├── useTaskCounts.ts
+    │   ├── useHealth.ts
+    │   ├── useDebouncedValue.ts
+    │   └── useToasts.ts
+    ├── lib/
+    │   ├── format.ts     # dates, plurals, completion percentage
+    │   └── validation.ts # client-side form limits
+    └── test/
+        ├── fixtures.ts
+        └── setup.ts
+```
+
+### 17.4 Data flow and state
+
+`App.tsx` owns one `Filters` object: `q`, `status`, `sort`, `order`, `page`, and `limit`.
+That object is the single source of truth for the visible query. It is in-memory only;
+reloading resets it and no task content enters the URL or browser storage.
+
+- `useTasks(query)` performs `GET /api/v1/tasks` with an `AbortController`. A newer query
+  aborts the older request, so a slow response cannot overwrite a fresh one.
+- `useDebouncedValue` delays the search term by 300 ms. Filter, sort, order, page-size,
+  and page changes apply immediately.
+- Any change to search, status, sort, order, or page size resets `page` to `1`.
+- `useTaskCounts()` runs three `limit=1` list calls in parallel — all, `todo`, and
+  `completed` — so summary cards stay correct while the list is filtered or paginated.
+- `useHealth()` checks `/healthz` on load and on demand; it never throws into the UI.
+- Mutations call the typed client, then refetch the visible page and counts. The UI never
+  assumes a mutation succeeded before the API confirms it.
+- A completed task renders no complete action. There is no reopen path.
+
+### 17.5 API client and errors
+
+`api/client.ts` is the only module that calls `fetch`. It:
+
+- joins the configured base with the documented paths;
+- sends `Accept: application/json` and sets `Content-Type` only when a body exists;
+- treats `204` as an empty success;
+- parses the standard `{ error: { code, message, details? } }` envelope into `ApiError`;
+- maps a transport failure to `NETWORK_ERROR` with a start-the-API hint;
+- validates and keeps only well-formed validation details;
+- encodes task IDs before interpolation;
+- omits empty search terms and the `all` status from query strings.
+
+Components receive `ApiError` values and render code, message, validation details, and a
+retry action. They do not inspect raw response bodies.
+
+### 17.6 Components and presentation
+
+- `Header` shows the API health indicator, last check time, refresh, recheck, and the
+  primary “New task” action.
+- `StatsCards` shows total, to-do, completed, and completion percentage; selecting a card
+  applies the matching status filter.
+- `Toolbar` owns search, status, sort, order, and page-size controls.
+- `TaskList` and `TaskRow` render title, description, status, updated/completed times, and
+  row actions. Rows show a busy state while a mutation is in flight.
+- `Pagination` reports the visible range and total and disables impossible moves.
+- `Modal` is the shared dialog primitive. `TaskFormModal` handles create and edit;
+  `ConfirmDeleteDialog` requires an explicit confirmation.
+- `EmptyState` distinguishes an empty database, no search matches, and an out-of-range
+  page.
+- `ApiErrorNotice` renders the standard envelope with retry.
+- `Toasts` announces mutation results in a live region and can be dismissed.
+
+Create and edit use the same code-point limits as the API. Edit sends only changed
+content fields; completion and `completedAt` are left to the API. Delete always asks for
+confirmation.
+
+### 17.7 Accessibility and theming
+
+- The page has a skip link, landmarks, a visible focus ring, and labelled controls.
+- Dialogs use `role="dialog"`, `aria-modal`, an accessible title, a focus trap, Escape to
+  close, and focus restoration. The title field or the safe cancel action receives
+  initial focus via `data-autofocus`.
+- Mutation results use an `aria-live` region; the visible result count is also polite.
+- Layout works from 360 px upward. Controls wrap rather than overflow.
+- Light and dark themes follow `prefers-color-scheme`; color is never the only status
+  signal.
+- `prefers-reduced-motion` removes non-essential transitions.
+- Status is conveyed with text and an icon, not color alone.
+
+### 17.8 Dashboard testing
+
+- Vitest + Testing Library + jsdom; `fetch` is mocked per test.
+- No test starts the API, opens a database, or uses the network.
+- `src/api/client.test.ts` covers query building, error envelopes, network failures,
+  counts, and health.
+- `src/lib/*.test.ts` covers formatting and form validation.
+- `src/App.test.tsx` covers loading, empty, error, search debounce, filters, sorting,
+  pagination, create, edit, complete, delete confirmation, focus behavior, and toasts.
+- Coverage includes `src/api` and `src/lib` with 80% thresholds.
+- Manual browser verification against a temporary API database is recorded in
+  `ACCEPTANCE.md`.
+
+### 17.9 Build and deployment
+
+```bash
+npm --prefix dashboard ci
+npm --prefix dashboard run build
+npm --prefix dashboard run preview
+```
+
+`vite build` emits static HTML, JS, CSS, and source maps to `dashboard/dist/`. A static
+host must serve `index.html` for client-side routes (the app uses a single route) and
+proxy `/api` and `/healthz` to the API. The build does not embed secrets; only
+`VITE_*` values are public.
+
+The dashboard is not part of the API’s `npm run build` or `npm start`.
+
+### 17.10 Dashboard limitations
+
+- No offline mode, service worker, or real-time updates.
+- No authentication or per-user view; it shares the API’s single task list.
+- No drag-and-drop ordering, bulk actions, attachments, or subtasks.
+- Filters and dialogs are not deep-linkable.
+- No browser automation in CI; the automated suite mocks `fetch`.
+
+---
+
+## 18. Deferred work
 
 Future versions may add, behind the same architecture:
 
@@ -815,8 +1116,8 @@ Future versions may add, behind the same architecture:
 - Due dates, reminders, priorities, tags, and recurring tasks.
 - Reopen, soft delete, archive, and audit history.
 - Bulk operations and import/export.
-- CORS for browser clients, rate limiting, and public deployment hardening.
+- CORS for cross-origin browser clients, rate limiting, and public deployment hardening.
 - FTS5 or another ranked search implementation.
 - Cursor pagination and ETag/version-based concurrency.
 - OpenAPI generation, Docker images, hosted deployment, and backup tooling.
-- A web or mobile client.
+- A native mobile client; the web dashboard ships in v1.3.

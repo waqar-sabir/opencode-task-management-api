@@ -1,8 +1,8 @@
 # Task Management API — Specification
 
-**Status:** Approved v1.2 — v1 implementation complete and verified
-**Date:** 2026-11-18 (v1.1: 2026-11-19; v1.2: 2026-11-19)
-**Scope:** Single-user local HTTP API
+**Status:** Approved v1.3 — API v1 complete; companion dashboard added
+**Date:** 2026-11-18 (v1.1: 2026-11-19; v1.2: 2026-11-19; v1.3: 2026-11-22)
+**Scope:** Single-user local HTTP API with a companion web dashboard
 **Related documents:** [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`PLAN.md`](./PLAN.md)
 
 ---
@@ -13,6 +13,10 @@ Define the business and functional contract for a small HTTP API that lets one
 individual manage a personal task list. The API provides task creation, retrieval,
 editing, deletion, search, status filtering, and completion, with durable local
 persistence.
+
+The project also ships a companion React dashboard in `dashboard/` that consumes the
+same API from a browser. The dashboard is a client, not a second backend: it adds no
+endpoints and no server-side behavior.
 
 This document is the source of truth for externally observable behavior. Implementation
 details live in `ARCHITECTURE.md`; delivery order lives in `PLAN.md`.
@@ -29,6 +33,9 @@ a local service with a simple JSON contract and a single SQLite file.
 The API is intentionally not a team product. There is no account system and no
 multi-user isolation in v1. The trust boundary is the local machine.
 
+A companion dashboard provides a browser UI for the same list. It is served from the
+same origin as the API in local development so the API can keep its no-CORS posture.
+
 ---
 
 ## 3. Goals
@@ -39,6 +46,8 @@ multi-user isolation in v1. The trust boundary is the local machine.
 4. Record completion time and make completion safe to retry.
 5. Keep the operational footprint to Node.js plus one SQLite file.
 6. Produce a contract that is easy to test, document, and extend.
+7. Provide a local, keyboard-accessible dashboard that exercises the public API
+   without changing it.
 
 ---
 
@@ -52,8 +61,12 @@ The following are explicitly out of scope for v1:
 - Reopening a completed task; completion is one-way.
 - Soft delete, archive, restore, or audit history.
 - Bulk create/update/delete or import/export.
-- CORS support, rate limiting, or public deployment hardening.
-- A web or mobile UI, real-time updates, or webhooks.
+- CORS support, rate limiting, or public deployment hardening. The dashboard is
+  same-origin, so no CORS headers are added.
+- Real-time updates, webhooks, or push notifications.
+- Mobile or desktop native clients, hosted multi-user dashboards, or offline mode.
+- Dashboard features that are not backed by the API, such as drag-and-drop ordering,
+  bulk edits, or client-side task storage.
 - Full-text relevance ranking or accent-insensitive search.
 - Multi-instance deployment or horizontal scaling.
 - OpenAPI generation, container images, or hosted infrastructure.
@@ -71,6 +84,8 @@ The following are explicitly out of scope for v1:
 | Storage | Local SQLite file, default `./data/tasks.db` |
 | External services | None |
 | Concurrency | Single process; last-write-wins |
+| Dashboard | Separate React SPA in `dashboard/`, same origin as the API via a proxy |
+| Dashboard persistence | None; task data is fetched from the API and never stored in the browser |
 | Target scale | ≤ 10,000 tasks and ≤ 10 requests/second per instance |
 
 Because there is no authentication, exposing the port beyond localhost gives anyone who
@@ -92,6 +107,8 @@ can reach it full read/write access. The default configuration must remain loopb
 | **D8** | Title 1–200, description 0–2000; unknown fields rejected |
 | **D9** | No CORS, rate limiting, bulk operations, teams, sharing, or assignments |
 | **D10** | Single instance; target ≤ 10,000 tasks and ≤ 10 requests/second |
+| **D11** | The companion dashboard is a separate React/Vite SPA that consumes only `/api/v1` and `/healthz`; no API changes |
+| **D12** | Dashboard and API share an origin through a dev/preview proxy or reverse proxy; the API still sends no CORS headers |
 
 ---
 
@@ -110,6 +127,10 @@ can reach it full read/write access. The default configuration must remain loopb
 10. No external service is needed to run or test the API.
 11. The SQLite file is the durable system of record; deleting it deletes all tasks.
 12. Only one API process writes to a database file at a time.
+13. The dashboard is served from the same origin as the API, or behind a proxy that
+    forwards `/api` and `/healthz`.
+14. Dashboard UI state (filters, page, open dialogs) is ephemeral and is never a source
+    of truth.
 
 ---
 
@@ -125,6 +146,7 @@ can reach it full read/write access. The default configuration must remain loopb
 | **BR-6** | The API runs locally with no external services and is not exposed by default. |
 | **BR-7** | Every response is predictable, versioned, and validated consistently. |
 | **BR-8** | One developer can run, test, reset, and extend the project without specialized infrastructure. |
+| **BR-9** | A single user can manage tasks from a local web dashboard without a separate account or service. |
 
 ---
 
@@ -186,6 +208,7 @@ create ──► todo ──POST /complete──► completed
 | **FR-9** | Persistence | SQLite file; migrations on startup; successful writes committed before the response |
 | **FR-10** | Health | `GET /healthz`; verifies storage with `SELECT 1` |
 | **FR-11** | Validation and errors | Reject unknown fields and query parameters; one error envelope for all failures |
+| **FR-12** | Dashboard | `dashboard/` provides create, list, search, status filter, sort, pagination, edit, complete, delete, summary counts, and API health through the public API; completed tasks cannot be reopened |
 
 ---
 
@@ -206,6 +229,8 @@ create ──► todo ──POST /complete──► completed
   `POST /api/v1/tasks/:id/complete` need no content type and reject any
   supplied request body with `400 VALIDATION_ERROR`.
 - Request bodies are limited to 100 KB.
+- The dashboard consumes this contract unchanged. It adds no endpoints, headers, or
+  CORS behavior.
 
 ### 11.2 Endpoints
 
@@ -400,7 +425,64 @@ stack traces, file paths, or task content.
 
 ---
 
-## 13. Non-functional requirements
+## 13. Dashboard client
+
+### 13.1 Scope
+
+`dashboard/` is a separate React single-page application. It is a first-party client of
+the API described above, not a second server. It adds no database access, no endpoints,
+no authentication, and no CORS.
+
+The dashboard must remain usable when served from the same origin as the API. In
+development and preview, Vite proxies `/api` and `/healthz` to the API. A deployment
+that serves the built dashboard must do the same at its reverse proxy.
+
+### 13.2 Features
+
+| ID | Feature | Behavior |
+| --- | --- | --- |
+| **UI-1** | List | Shows the current page with title, description, status, and updated/completed times |
+| **UI-2** | Create | Modal form; title required; description optional; same 1–200 / 0–2000 code-point limits as the API |
+| **UI-3** | Edit | Modal form; sends only changed content fields; completion status and `completedAt` are preserved by the API |
+| **UI-4** | Complete | Marks a `todo` task complete; completed tasks are shown as terminal and cannot be reopened |
+| **UI-5** | Delete | Requires explicit confirmation; removes the task from the current view |
+| **UI-6** | Search | Debounced text search over titles and descriptions; empty results show a clear empty state |
+| **UI-7** | Filter | All, To do, and Completed; combines with search exactly as the API does |
+| **UI-8** | Sort and paginate | `createdAt`, `updatedAt`, or `title`; ascending or descending; 10, 20, 50, or 100 per page |
+| **UI-9** | Summary | Total, to-do, completed, and completion percentage from the unfiltered task set |
+| **UI-10** | Health | Shows whether `/healthz` is reachable and offers a manual recheck |
+| **UI-11** | Errors | Displays the API error code, message, validation details, and a retry action |
+| **UI-12** | States | Loading skeletons, refreshing state, empty states, and confirmation dialogs |
+
+### 13.3 Data and state rules
+
+- Every read and write goes through the documented API; the dashboard never opens SQLite.
+- Task content is not written to `localStorage`, `sessionStorage`, cookies, or the URL.
+- Filters, sort, page, and dialogs are in-memory UI state and reset on reload.
+- Mutations refetch the visible page and the summary counts; the dashboard does not
+  assume success before the API confirms it.
+- Search input is debounced by 300 ms.
+- Changing search, status, sort, order, or page size resets the view to page 1.
+- Summary counts come from three `limit=1` list calls: all, `todo`, and `completed`.
+- A completed task has no complete action; there is no reopen control.
+
+### 13.4 Accessibility and presentation
+
+- All controls are keyboard reachable and have accessible names.
+- Dialogs move focus to the first field or the safe action, keep Tab inside, close on
+  Escape, and restore focus.
+- Mutation results are announced with a live region.
+- Layout is responsive from 360 px upward and supports light and dark color schemes.
+- Motion respects `prefers-reduced-motion`.
+
+### 13.5 Out of scope for the dashboard
+
+Offline mode, real-time updates, drag-and-drop ordering, bulk actions, attachments,
+authentication, and per-user views are not part of v1.3.
+
+---
+
+## 14. Non-functional requirements
 
 | ID | Requirement | Target |
 | --- | --- | --- |
@@ -414,15 +496,18 @@ stack traces, file paths, or task content.
 | **NFR-8** | API contract | `/api/v1`; JSON UTF-8; ISO 8601 UTC; stable error shape |
 | **NFR-9** | Scale | Single process; 10,000 tasks; 10 requests/second; horizontal scaling out of scope |
 | **NFR-10** | Test isolation | Fresh database per test: `:memory:` for schema, service, repository, and HTTP tests; a temporary directory with a file database for migration, persistence, and permission tests. No shared mutable state; no test reads or writes `./data` |
+| **NFR-11** | Dashboard quality | React 19 + Vite, strict TypeScript, `npm --prefix dashboard run verify` green; no UI framework |
+| **NFR-12** | Dashboard accessibility | Keyboard operation, focus management, accessible names, live announcements, reduced motion, responsive to 360 px |
+| **NFR-13** | Dashboard security | Same-origin only; no CORS; no secrets or tokens; no task content in browser storage or the URL |
 
 ---
 
-## 14. Acceptance criteria
+## 15. Acceptance criteria
 
 ### Global
 
 - **G1** From a clean clone, install and `npm run verify` pass without a pre-existing database.
-- **G2** README commands start the API and demonstrate every endpoint.
+- **G2** README commands start the API and dashboard and demonstrate every endpoint.
 - **G3** Every error uses the envelope; no stack traces or SQL text reach the client.
 - **G4** Unknown body fields and query parameters return `400`.
 - **G5** All timestamps are ISO 8601 UTC with milliseconds and a trailing `Z`.
@@ -434,6 +519,8 @@ stack traces, file paths, or task content.
 - **G11** SQLite busy/locked beyond the timeout returns `503 STORAGE_UNAVAILABLE`.
 - **G12** Unexpected failures return `500 INTERNAL_ERROR` without implementation details.
 - **G13** On POSIX, the data directory is created with mode `0700` and the database file with mode `0600`.
+- **G14** The dashboard builds and its lint, typecheck, and tests pass from a clean install; it adds no API route, schema, header, or CORS behavior.
+- **G15** The dashboard works with only the documented endpoints and shows the standard error envelope.
 
 ### Create
 
@@ -528,9 +615,25 @@ stack traces, file paths, or task content.
 - **H1** `/healthz` returns `200` with `{ "status": "ok" }` when storage responds.
 - **H2** `/healthz` returns `503` when the storage check fails.
 
+### Dashboard
+
+- **UI1** The dashboard loads tasks and reports API health.
+- **UI2** Creating a task with a title and optional description adds it to the list.
+- **UI3** Search filters by title and description after the debounce; no matches show an empty state.
+- **UI4** Status filters and summary counts stay consistent with the API.
+- **UI5** Sorting and pagination request the documented parameters and render the returned page.
+- **UI6** Editing sends only changed content fields and preserves completion.
+- **UI7** Completing a task updates it in place and removes the complete action; there is no reopen.
+- **UI8** Deleting requires confirmation and removes the task.
+- **UI9** API failures show code, message, validation details when present, and a retry action.
+- **UI10** Loading, refreshing, empty, and no-match states are distinct.
+- **UI11** Dialogs trap focus, close on Escape, and restore focus; controls have accessible names.
+- **UI12** Layout works at 360 px, in light and dark schemes, with reduced motion respected.
+- **UI13** No task content is persisted in browser storage or the URL, and the API adds no CORS headers.
+
 ---
 
-## 15. Traceability
+## 16. Traceability
 
 | Requirement | Acceptance criteria |
 | --- | --- |
@@ -555,15 +658,23 @@ stack traces, file paths, or task content.
 | NFR-8 API contract | G3–G5 |
 | NFR-9 Scale | Manual benchmark |
 | NFR-10 Test isolation | P7 |
+| FR-12 Dashboard | UI1–UI13 |
+| BR-9 Dashboard | UI1–UI12 |
+| NFR-11 Dashboard quality | UI1–UI13 |
+| NFR-12 Accessibility | UI11–UI12 |
+| NFR-13 Dashboard security | UI13 |
 
 ---
 
-## 16. Change control
+## 17. Change control
 
 - This specification is approved for v1.
 - **v1.1 (2026-11-19):** `POST`/`PATCH` require `application/json` only when the
   request carries a body. Bodyless actions such as task completion no longer
   require a content type. Affects §11.1, §11.10, §11.11, and C7.
+- **v1.3 (2026-11-22):** Adds the companion dashboard as a separate same-origin client.
+  No API behavior, fields, limits, or error codes change; the API still has no CORS.
+  Affects §1–§8, §10–§11, the new §13, and §14–§17.
 - Any change to HTTP behavior, data fields, status semantics, search behavior, or limits
   requires a specification update and re-approval.
 - Implementation phases and task ordering may change without altering this contract.

@@ -1,28 +1,34 @@
 # Acceptance Verification
 
-Verification record for `docs/SPEC.md` §14. Date: 2026-11-19.
+Verification record for `docs/SPEC.md` §15. Date: 2026-11-22.
+
+Covers the v1 API and the v1.3 dashboard client.
 
 ## Method
 
 | Layer | How |
 | --- | --- |
-| Automated | `npm run verify` — lint, typecheck, 151 tests |
+| Automated (API) | `npm run verify` — lint, typecheck, 151 tests |
+| Automated (dashboard) | `npm run verify:dashboard` — lint, typecheck, 27 tests |
 | HTTP contract | Supertest against `createApp` with a fresh `:memory:` database |
 | Persistence | Temporary file databases under the OS temp directory |
+| Dashboard behavior | Vitest + Testing Library + jsdom with a mocked `fetch` |
 | Manual | `curl` against `node dist/server.js`; `SIGTERM`/restart; `stat` |
+| Manual dashboard | Vite dev server against the API with a temporary database; desktop, dark, mobile, and dialog screenshots |
 | Performance | `npm run benchmark` — 10,000 seeded tasks, 300 samples per operation |
+| Build | `npm run build`; `npm run build:dashboard` |
 | Static | `git ls-files`; source review of startup and logging paths |
 
 ## Global
 
 | ID | Result | Evidence |
 | --- | --- | --- |
-| G1 | Pass | Clean clone of the phase-5 commit: `npm ci`, `npm run verify` (151 tests), `npm run build`, `/healthz` `200` — 2026-11-19 |
-| G2 | Pass | `README.md` documents setup, run, every endpoint, and error examples |
+| G1 | Pass | Clean clone: `npm ci`, `npm --prefix dashboard ci`, `npm run verify:all` (151 API + 27 dashboard tests), both builds, `/healthz` `200` — 2026-11-22 |
+| G2 | Pass | `README.md` documents setup, run, every endpoint, dashboard features, and error examples |
 | G3 | Pass | `tests/unit/middleware/error-handler.test.ts`; every HTTP error asserted as `{ error: { code, message } }` |
 | G4 | Pass | Unknown create/update fields and unknown query parameters return `400` (`tasks.test.ts`) |
 | G5 | Pass | `row-mapper.test.ts`; timestamp regex assertions in `tasks.test.ts`; live responses |
-| G6 | Pass | `git ls-files` contains no `.env`, `data/`, database, WAL/SHM, build, or coverage files |
+| G6 | Pass | `git ls-files` contains no `.env`, `data/`, database, WAL/SHM, build, coverage, or dashboard build files |
 | G7 | Pass | Default `HOST=127.0.0.1` (`config.test.ts`); live `HOST=0.0.0.0` start logged the no-auth warning |
 | G8 | Pass | Request ID, method, path, status, duration logged; title/description/`q` redaction tests in `tasks.test.ts` |
 | G9 | Pass | No credential handling exists; all HTTP and live requests succeed without headers |
@@ -30,6 +36,8 @@ Verification record for `docs/SPEC.md` §14. Date: 2026-11-19.
 | G11 | Pass | `SQLITE_BUSY` and `SQLITE_LOCKED` map to `503 STORAGE_UNAVAILABLE` (`error-handler.test.ts`) |
 | G12 | Pass | Unexpected errors return `500 INTERNAL_ERROR` without stack traces or SQL text (`error-handler.test.ts`) |
 | G13 | Pass | `connection.test.ts` asserts `0700`/`0600`; live `stat` confirmed `drwx------` and `-rw-------` |
+| G14 | Pass | `npm run verify:dashboard` and `npm run build:dashboard` pass; `git diff`/route review confirms no API route, schema, header, or CORS change |
+| G15 | Pass | `client.test.ts` and `App.test.tsx` use only documented endpoints; `ApiErrorNotice` renders the standard envelope, including validation details |
 
 ## Create
 
@@ -142,6 +150,31 @@ Verification record for `docs/SPEC.md` §14. Date: 2026-11-19.
 | --- | --- | --- |
 | H1 | Pass | "reports ok when storage responds" |
 | H2 | Pass | "returns 503 when the storage probe fails" |
+
+## Dashboard
+
+Manual verification used the Vite dev server on `http://127.0.0.1:5173` proxying to the
+API on `http://127.0.0.1:3100` with a temporary SQLite database. Automated evidence is in
+`dashboard/src/**/*.test.ts(x)`.
+
+| ID | Result | Evidence |
+| --- | --- | --- |
+| UI1 | Pass | `App.test.tsx` loads a page and health state; manual header showed “API online” |
+| UI2 | Pass | Create modal test and manual create; new task appeared and counts changed |
+| UI3 | Pass | Debounced search test; manual title and description searches; no-match empty state |
+| UI4 | Pass | Filter tests; summary cards use unfiltered `limit=1` counts and stayed consistent |
+| UI5 | Pass | Sort and pagination tests; manual page-size, sort, and order changes requested documented parameters |
+| UI6 | Pass | Edit test asserts only changed fields; completed task stayed completed |
+| UI7 | Pass | Complete test; row updated in place, complete action removed, no reopen control |
+| UI8 | Pass | Delete confirmation test; cancel kept the task, confirm removed it |
+| UI9 | Pass | Error-envelope test; code, message, validation details, and retry rendered |
+| UI10 | Pass | Distinct loading skeleton, refresh, empty-database, and no-match states |
+| UI11 | Pass | Focus trap, Escape, focus restoration, and accessible-name tests |
+| UI12 | Pass | 360 px, dark scheme, and reduced-motion screenshots/checks; no overflow |
+| UI13 | Pass | Client stores no task content in storage, cookies, or the URL; API response headers contain no CORS |
+
+Screenshots: `docs/dashboard.png` (desktop) and the temporary Playwright captures used
+during verification (light, dark, mobile, modal, search, pagination, delete).
 
 ## Performance (NFR-1, NFR-9)
 

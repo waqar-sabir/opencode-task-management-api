@@ -1,9 +1,9 @@
 # Task Management API — Implementation Plan
 
-**Status:** Approved v1.0 — all phases complete; verified 2026-11-19
-**Date:** 2026-11-18
-**Scope:** Single-user local HTTP API
-**Related documents:** [`SPEC.md`](./SPEC.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md)
+**Status:** Approved v1.1 — all phases complete; verified 2026-11-22
+**Date:** 2026-11-18 (v1.1 dashboard phase 2026-11-22)
+**Scope:** Single-user local HTTP API with a same-origin React dashboard
+**Related documents:** [`SPEC.md`](./SPEC.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`ACCEPTANCE.md`](./ACCEPTANCE.md)
 
 ---
 
@@ -16,33 +16,38 @@
 | Implementation plan | Approved (this document) |
 | Phase 0 — scaffold and tooling | **Complete** |
 | Phases 1–5 | **Complete** |
+| Phase 6 — dashboard | **Complete** |
 | Application code | Complete v1 API: task lifecycle, health check, graceful shutdown |
-| `package.json` / lockfile | Present and committed |
-| Tests | 151 tests: unit (config, repository, migrations, mapper, connection, error handler) and HTTP/persistence/health/shutdown integration |
+| Dashboard | React 19 + Vite SPA in `dashboard/`: list, create, edit, complete, delete, search, filter, sort, pagination, summary, health |
+| `package.json` / lockfile | Present and committed; dashboard has its own lockfile |
+| Tests | 178 total: 151 API tests and 27 dashboard tests |
 | Database | Schema v1; runtime file at `DATABASE_PATH`, mode `0600` inside a `0700` directory |
 | Benchmark | 10,000 tasks; CRUD p95 ≤ 4.3 ms, list/search p95 ≤ 13.3 ms |
 | Acceptance record | `docs/ACCEPTANCE.md` |
 | Git repository | Initialized on `main`; `origin` configured |
 
-Phases 0–4 are complete. Each later gate must pass before the next phase begins.
+Phases 0–6 are complete. Each later gate must pass before the next phase begins.
 
 ---
 
 ## 2. Objective and definition of success
 
-**Objective:** deliver a local, single-user task management API that satisfies `SPEC.md`
-and runs with Node.js and one SQLite file, with no external services.
+**Objective:** deliver a local, single-user task management API and a companion React
+dashboard that satisfy `SPEC.md`, run with Node.js and one SQLite file, and need no
+external services.
 
 Success at the final gate:
 
-1. All acceptance criteria in `SPEC.md` §14 pass.
-2. `npm ci` and `npm run verify` pass from a clean clone.
-3. Core logic coverage is at least 85%.
-4. The README lets a new reviewer run the API and exercise every endpoint in under
-   10 minutes.
+1. All acceptance criteria in `SPEC.md` §15 pass.
+2. `npm ci`, `npm --prefix dashboard ci`, and `npm run verify:all` pass from a clean
+   clone.
+3. Core API logic coverage is at least 85%; dashboard `api`/`lib` coverage is at least
+   80%.
+4. The README lets a new reviewer run the API and dashboard and exercise every feature in
+   under 10 minutes.
 5. Data survives a restart; WAL and database files are not tracked.
 6. No out-of-scope feature, secret, or real customer data is present.
-7. `AGENTS.md` matches the implemented runtime, storage, and commands.
+7. `AGENTS.md` matches the implemented runtime, storage, commands, and dashboard.
 
 ---
 
@@ -51,9 +56,10 @@ Success at the final gate:
 - Node.js 24 LTS, npm, TypeScript ESM.
 - Built-in `node:sqlite`; no native database add-on.
 - Express 5, Zod, pino, Vitest, Supertest.
+- React 19, Vite, Testing Library, jsdom for the dashboard.
 - No ORM, no authentication, no CORS, no rate limiting, no background workers.
-- One process and one SQLite writer.
-- Default bind address `127.0.0.1`.
+- One process and one SQLite writer; the dashboard is a separate static client.
+- Default bind address `127.0.0.1`; the dashboard is same-origin through a proxy.
 - All behavior follows `SPEC.md`; all structure follows `ARCHITECTURE.md`.
 - Do not add features that are not in `SPEC.md`.
 
@@ -69,6 +75,7 @@ Success at the final gate:
 | **3** | Lifecycle and discovery | FR-4 to FR-8 | Update/delete/complete/search/filter tests |
 | **4** | Hardening and operations | FR-10; NFR-4, NFR-5 | Health, shutdown, error mapping, security tests |
 | **5** | Verification and release docs | All | Full acceptance and documentation review |
+| **6** | Dashboard client | FR-12; BR-9; NFR-11–13; UI1–UI13 | Dashboard build, lint, typecheck, tests, and manual browser verification |
 
 Phases are sequential. A phase gate may not be waived.
 
@@ -337,7 +344,7 @@ handling.
 
 ### Tasks
 
-- [x] Walk through every acceptance criterion in `SPEC.md` §14 and record the result.
+- [x] Walk through every acceptance criterion in `SPEC.md` §15 and record the result.
 - [x] Run `npm run test:coverage`; core logic ≥ 85%.
 - [x] Run a manual benchmark with 10,000 seeded tasks:
       - CRUD p95 ≤ 100 ms;
@@ -372,9 +379,61 @@ handling.
 
 ---
 
-## 11. Test plan
+## 11. Phase 6 — Dashboard client
 
-### 11.1 Automated
+**Goal:** deliver a React dashboard that exercises the documented API without changing it,
+then bring the documentation back in sync.
+
+### Tasks
+
+- [x] Add `dashboard/` as a separate Vite + React 19 + TypeScript SPA with its own
+      `package.json`, lockfile, strict `tsconfig.json`, ESLint config, and Prettier
+      formatting.
+- [x] Configure Vite dev and preview servers on fixed ports with a proxy for `/api` and
+      `/healthz`; allow `TASK_API_URL` to change the proxy target.
+- [x] Implement a typed API client for list, detail, create, update, complete, delete,
+      counts, and health; parse the standard error envelope into a typed error.
+- [x] Build the list view: task rows with title, description, status, updated/completed
+      times, loading skeletons, empty states, and a no-match state.
+- [x] Add create and edit modals with client-side limits, changed-field-only updates,
+      focus trapping, Escape handling, and focus restoration.
+- [x] Add completion and confirmed deletion with busy states and live-region toasts.
+- [x] Add 300 ms debounced search, status filters, sort, order, and page-size controls;
+      reset to page 1 when the query shape changes.
+- [x] Add summary cards from three `limit=1` list calls and a health indicator with a
+      manual recheck.
+- [x] Add responsive light/dark styling from 360 px upward and respect reduced motion.
+- [x] Test the client, formatting, validation, and App behavior with Vitest, Testing
+      Library, and jsdom using a mocked `fetch`; enforce 80% coverage on `api` and `lib`.
+- [x] Add root scripts `dev:dashboard`, `build:dashboard`, `test:dashboard`,
+      `verify:dashboard`, and `verify:all`.
+- [x] Exclude `dashboard/` from root ESLint and generated dashboard output from git.
+- [x] Update `SPEC.md` (v1.3 §13 and dashboard criteria), `ARCHITECTURE.md`,
+      `ACCEPTANCE.md`, `README.md`, `AGENTS.md`, and `dashboard/README.md`.
+- [x] Verify manually against a temporary API database: create, search, filter, edit,
+      complete, delete, paginate, sort, dark mode, and a 360 px layout; check the browser
+      console.
+- [x] Copy a representative screenshot to `docs/dashboard.png`.
+
+### Gate
+
+- [x] `npm --prefix dashboard ci && npm run verify:dashboard` passes.
+- [x] `npm run build:dashboard` emits `dashboard/dist/`.
+- [x] `npm run verify:all` passes from a clean clone.
+- [x] The dashboard uses only documented endpoints and adds no API route, schema, header,
+      or CORS behavior.
+- [x] No task content is written to browser storage or the URL.
+- [x] UI1–UI13 and G14–G15 pass and are recorded in `ACCEPTANCE.md`.
+- [x] Documentation and `AGENTS.md` match the implementation.
+
+**Demo:** start the API, run `npm run dev:dashboard`, and exercise the full task lifecycle
+in the browser.
+
+---
+
+## 12. Test plan
+
+### 12.1 Automated
 
 | Area | Location | What it proves |
 | --- | --- | --- |
@@ -390,8 +449,11 @@ handling.
 | Persistence | `tests/integration/persistence.test.ts` | Close/reopen durability, delete-and-recreate |
 | Health | `tests/integration/health.test.ts` | 200/503 and unversioned mount |
 | Shutdown | `tests/integration/shutdown.test.ts` | Drain, database close, reopenable file, idempotent stop |
+| Dashboard client | `dashboard/src/api/client.test.ts` | Query building, error envelope, network failure, counts, health |
+| Dashboard lib | `dashboard/src/lib/*.test.ts` | Date/plural/percentage formatting and form validation |
+| Dashboard App | `dashboard/src/App.test.tsx` | Loading, empty, error, search debounce, filters, sort, pagination, CRUD, dialogs, focus, toasts |
 
-### 11.2 Commands
+### 12.2 Commands
 
 ```bash
 npm run test
@@ -401,9 +463,14 @@ npm run verify
 npm run benchmark
 npx vitest run tests/integration/tasks.test.ts -t "creates a task"
 npx vitest run tests/integration/tasks.test.ts
+
+npm run test:dashboard
+npm run verify:dashboard
+npm run verify:all
+npm --prefix dashboard run test -- src/App.test.tsx
 ```
 
-### 11.3 Manual verification
+### 12.3 Manual verification
 
 1. Start from a clean checkout: `npm ci && npm run dev`.
 2. `GET /healthz` returns `200`.
@@ -421,10 +488,24 @@ npx vitest run tests/integration/tasks.test.ts
     content type; confirm the documented codes.
 13. Inspect logs; confirm no titles, descriptions, or query values.
 14. Run the 10,000-task benchmark.
+15. In a second terminal, `npm --prefix dashboard ci && npm run dev:dashboard`.
+16. Open `http://127.0.0.1:5173`; confirm the health indicator is online and tasks load.
+17. Create a task with a title and description; confirm it appears and the summary counts
+    update.
+18. Search by a title fragment and a description fragment; confirm the 300 ms debounce
+    and the no-match state.
+19. Switch status filters, sort fields, order, and page size; confirm page resets to 1.
+20. Edit a task; confirm only changed content is sent and completion is preserved.
+21. Complete a task; confirm the complete action disappears and there is no reopen.
+22. Delete a task; confirm the confirmation dialog, cancellation, and removal.
+23. Check keyboard operation: skip link, dialog focus trap, Escape, and focus restoration.
+24. Check 360 px layout, light and dark schemes, and reduced motion.
+25. Confirm the browser console is clean and no task content appears in storage or the
+    URL.
 
 ---
 
-## 12. Risks and mitigations
+## 13. Risks and mitigations
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
@@ -439,27 +520,34 @@ npx vitest run tests/integration/tasks.test.ts
 | No-auth exposure | Medium if misconfigured | Full data access | Loopback default; warning; README security note |
 | Unescaped search wildcards | Medium | Wrong results | Escape function plus literal-wildcard tests |
 | Body/content-type edge cases | Medium | Wrong status codes | Explicit middleware and integration tests |
+| Dashboard/API contract drift | Medium | Broken UI or accidental API change | Typed client mirrors the spec; API tests unchanged; G14–G15 |
+| Missing production proxy | Medium | Dashboard cannot reach the API | Document same-origin requirement; Vite proxy in dev/preview |
+| Browser storage leaks task content | Low | Privacy loss on shared machines | No storage or URL persistence; UI13 test |
+| Debounced search race | Medium | Stale results overwrite fresh ones | AbortController per request; debounce tests |
 | Scope creep | Medium | Delayed release | `SPEC.md` change control; phase gates |
 
 ---
 
-## 13. Definition of done
+## 14. Definition of done
 
-- [x] All acceptance criteria in `SPEC.md` §14 are verified.
-- [x] `npm ci && npm run verify` passes from a clean clone.
+- [x] All acceptance criteria in `SPEC.md` §15 are verified.
+- [x] `npm ci && npm --prefix dashboard ci && npm run verify:all` passes from a clean
+      clone.
 - [x] `npm run build` succeeds and `node dist/server.js` answers `GET /healthz`.
-- [x] `npm run test:coverage` meets the 85% core target.
-- [x] Every endpoint is demonstrated in the README.
+- [x] `npm run build:dashboard` emits a static bundle that loads with the API running.
+- [x] `npm run test:coverage` meets the 85% API target; dashboard coverage meets 80%.
+- [x] Every endpoint and dashboard feature is demonstrated in the README.
 - [x] Persistence works across restart.
 - [x] Health, graceful shutdown, and error mapping work.
 - [x] Logs contain no task content or search terms.
+- [x] The dashboard adds no API route, schema, header, or CORS behavior.
 - [x] No secrets, database files, or generated output are tracked.
 - [x] `AGENTS.md`, `SPEC.md`, `ARCHITECTURE.md`, `PLAN.md`, and the README agree.
 - [x] No out-of-scope feature is present.
 
 ---
 
-## 14. Out of scope
+## 15. Out of scope
 
 - Accounts, authentication, authorization, and per-user isolation.
 - Teams, sharing, assignments, comments, attachments, subtasks.
@@ -467,14 +555,15 @@ npx vitest run tests/integration/tasks.test.ts
 - Reopen, soft delete, archive, restore, audit history.
 - Bulk operations, import/export.
 - CORS, rate limiting, public deployment hardening.
-- UI, real-time updates, webhooks.
+- Real-time updates, webhooks, offline mode, and a native mobile client.
+- Cross-origin dashboard deployment; v1.3 is same-origin only.
 - Ranked/full-text search and accent-insensitive search.
 - Cursor pagination, ETag/version concurrency.
 - OpenAPI generation, Docker, hosted infrastructure, backup tooling.
 
 ---
 
-## 15. Change control
+## 16. Change control
 
 - The approved scope is defined by `SPEC.md`; changes to observable behavior require a
   specification update and re-approval.
@@ -483,3 +572,5 @@ npx vitest run tests/integration/tasks.test.ts
   `SPEC.md` behavior is preserved.
 - Any new dependency or runtime change must be recorded in `ARCHITECTURE.md`.
 - Documentation is updated in the same phase that changes behavior.
+- **v1.1 (2026-11-22):** adds Phase 6 (dashboard client), dashboard commands, tests, and
+  documentation. No API behavior or phase gate changes.

@@ -26,9 +26,15 @@ Use these unless the user directs otherwise:
 | `test:coverage` | `vitest run --coverage` |
 | `benchmark` | `tsx scripts/benchmark.ts` |
 | `verify` | lint, then typecheck, then test |
+| `dev:dashboard` | Start the Vite dashboard dev server (port 5173, proxying API) |
+| `build:dashboard` | Build the dashboard static bundle |
+| `test:dashboard` | Run the dashboard test suite |
+| `verify:dashboard` | Dashboard lint → typecheck → test |
+| `verify:all` | API and dashboard lint → typecheck → test |
 
-- Run `npm run verify` before claiming work is done; otherwise state that it was not run.
+- Run `npm run verify:all` before claiming work is done; otherwise state that it was not run.
 - Single test: `npx vitest run tests/integration/tasks.test.ts -t "creates a task"`.
+- Single dashboard test: `npm --prefix dashboard run test -- src/App.test.tsx`.
 - Single file: `npx vitest run tests/integration/tasks.test.ts`.
 - Benchmark: `npm run benchmark` seeds 10,000 tasks in a temporary database and checks p95 budgets. It never writes to `./data`.
 
@@ -60,6 +66,15 @@ tests/
 - JSON errors: `{ "error": { "code", "message", "details"? } }`. Use 400 for validation, 404 for missing, 413 for an oversized body, 415 for a wrong media type, 503 for unavailable storage, and 500 for unexpected failures. There is no 409: v1 has no conflict case.
 - Mount routes under `/api/v1`; expose `GET /healthz`.
 - Use UUIDs for IDs and ISO 8601 UTC strings for timestamps.
+
+### Dashboard boundaries
+- The dashboard lives in `dashboard/` and is a Vite + React 19 + TypeScript SPA.
+- It communicates with the API only through the documented `/api/v1` endpoints.
+- It never opens SQLite or imports from `src/`.
+- Its only integration point is the typed API client in `dashboard/src/api/client.ts`.
+- Dashboard tests mock `fetch`; they never start the API or touch the database.
+- Dashboard ESLint config and `tsconfig` are independent; they do not affect the API.
+- Root ESLint ignores `dashboard/`; dashboard ESLint ignores root `src/`.
 
 ## Testing
 - Vitest + Supertest; no network or external services.
