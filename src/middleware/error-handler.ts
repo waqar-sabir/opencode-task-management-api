@@ -134,9 +134,13 @@ function toFailure(error: unknown): Failure {
 
 /** The only place that writes an error response. */
 export function errorHandler(logger: Logger): ErrorRequestHandler {
-  return (error, _request, response, next) => {
+  return (error, _request, response, _next) => {
     if (response.headersSent) {
-      next(error);
+      logger.error(
+        { requestId: getRequestId(response), err: error },
+        "request failed after headers were sent",
+      );
+      response.destroy();
       return;
     }
 

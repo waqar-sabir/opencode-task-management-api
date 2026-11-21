@@ -92,6 +92,15 @@ describe("POST /api/v1/tasks", () => {
     expect(tooLong.body.error.details[0].path).toBe("title");
   });
 
+  it("counts astral title characters as code points", async () => {
+    const ok = await createTask({ title: "😀".repeat(200) });
+    const tooLong = await createTask({ title: "😀".repeat(201) });
+
+    expect(ok.status).toBe(201);
+    expect(tooLong.status).toBe(400);
+    expect(tooLong.body.error.details[0].path).toBe("title");
+  });
+
   it("accepts a 2000 code point description and rejects 2001", async () => {
     const ok = await createTask({
       title: "Descriptions",
@@ -100,6 +109,21 @@ describe("POST /api/v1/tasks", () => {
     const tooLong = await createTask({
       title: "Descriptions",
       description: "a".repeat(2001),
+    });
+
+    expect(ok.status).toBe(201);
+    expect(tooLong.status).toBe(400);
+    expect(tooLong.body.error.details[0].path).toBe("description");
+  });
+
+  it("counts astral description characters as code points", async () => {
+    const ok = await createTask({
+      title: "Descriptions",
+      description: "😀".repeat(2000),
+    });
+    const tooLong = await createTask({
+      title: "Descriptions",
+      description: "😀".repeat(2001),
     });
 
     expect(ok.status).toBe(201);
@@ -147,6 +171,29 @@ describe("POST /api/v1/tasks", () => {
 
     expect(response.status).toBe(415);
     expect(response.body.error.code).toBe("UNSUPPORTED_MEDIA_TYPE");
+  });
+
+  it.each([
+    "application/json-patch+json",
+    "application/jsonp",
+    "text/plain; note=application/json",
+  ])("rejects the non-JSON media type %s", async (contentType) => {
+    const response = await request(app)
+      .post("/api/v1/tasks")
+      .set("Content-Type", contentType)
+      .send('{"title":"x"}');
+
+    expect(response.status).toBe(415);
+    expect(response.body.error.code).toBe("UNSUPPORTED_MEDIA_TYPE");
+  });
+
+  it("accepts a JSON media type with parameters", async () => {
+    const response = await request(app)
+      .post("/api/v1/tasks")
+      .set("Content-Type", "application/json; charset=utf-8")
+      .send('{"title":"x"}');
+
+    expect(response.status).toBe(201);
   });
 
   it("rejects a body over 100 KB", async () => {
@@ -267,9 +314,14 @@ describe("GET /api/v1/tasks", () => {
     "page=0",
     "page=1.5",
     "page=abc",
+    "page=1e1",
+    "page=01",
+    "page=%2B1",
     "limit=0",
     "limit=101",
     "limit=2.5",
+    "limit=1e1",
+    "limit=%201",
   ])("rejects invalid paging %s", async (query) => {
     const response = await request(app).get(`/api/v1/tasks?${query}`);
 
@@ -450,6 +502,15 @@ describe("GET /api/v1/tasks", () => {
   it("generates a request id when none is supplied", async () => {
     const response = await request(app).get("/api/v1/tasks");
 
+    expect(response.headers["x-request-id"]).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("replaces an overlong request id", async () => {
+    const response = await request(app)
+      .get("/api/v1/tasks")
+      .set("X-Request-Id", "x".repeat(129));
+
+    expect(response.headers["x-request-id"]).not.toBe("x".repeat(129));
     expect(response.headers["x-request-id"]).toMatch(/^[0-9a-f-]{36}$/);
   });
 
@@ -682,6 +743,17 @@ describe("DELETE /api/v1/tasks/:id", () => {
     expect(response.status).toBe(204);
   });
 
+  it("rejects a request body", async () => {
+    const created = await createTask({ title: "Bodyless delete" });
+
+    const response = await request(app)
+      .delete(`/api/v1/tasks/${created.body.id}`)
+      .send({ unexpected: "field" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+  });
+
   it("rejects a malformed id", async () => {
     const response = await request(app).delete("/api/v1/tasks/nope");
 
@@ -732,6 +804,17 @@ describe("POST /api/v1/tasks/:id/complete", () => {
 
     expect(unknown.status).toBe(404);
     expect(malformed.status).toBe(400);
+  });
+
+  it("rejects a request body", async () => {
+    const created = await createTask({ title: "Bodyless complete" });
+
+    const response = await request(app)
+      .post(`/api/v1/tasks/${created.body.id}/complete`)
+      .send({ unexpected: "field" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
   });
 
   it("does not affect other tasks", async () => {
@@ -785,6 +868,19 @@ describe("search semantics", () => {
     ).toEqual(["100% complete"]);
     expect(underscore.body.total).toBe(1);
     expect(backslash.body.total).toBe(1);
+  });
+
+  it("does not match across the title/description boundary", async () => {
+    await createTask({ title: "alpha", description: "beta" });
+    await createTask({ title: "alpha\nbeta", description: "" });
+
+    const response = await request(app).get(
+      `/api/v1/tasks?q=${encodeURIComponent("alpha\nbeta")}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.total).toBe(1);
+    expect(response.body.items[0].title).toBe("alpha\nbeta");
   });
 
   it("returns an empty list when nothing matches", async () => {

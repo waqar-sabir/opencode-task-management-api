@@ -1,7 +1,7 @@
 # Task Management API — Specification
 
-**Status:** Approved v1.1 — v1 implementation complete and verified
-**Date:** 2026-11-18 (v1.1: 2026-11-19)
+**Status:** Approved v1.2 — v1 implementation complete and verified
+**Date:** 2026-11-18 (v1.1: 2026-11-19; v1.2: 2026-11-19)
 **Scope:** Single-user local HTTP API
 **Related documents:** [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`PLAN.md`](./PLAN.md)
 
@@ -156,6 +156,7 @@ The internal search column `search_text` is not part of the API representation. 
 6. Title and description limits are measured in Unicode code points, not UTF-16 units.
 7. Deleting a task removes it from every read, search, and filter result.
 8. Unknown request fields are rejected rather than ignored.
+9. Bodyless actions reject any supplied request body.
 
 ### 9.3 Status lifecycle
 
@@ -202,7 +203,8 @@ create ──► todo ──POST /complete──► completed
 - Single-task responses return the task object directly; list responses use a page envelope.
 - `POST` and `PATCH` requests that carry a body require
   `Content-Type: application/json`. Bodyless actions such as
-  `POST /api/v1/tasks/:id/complete` need no content type.
+  `POST /api/v1/tasks/:id/complete` need no content type and reject any
+  supplied request body with `400 VALIDATION_ERROR`.
 - Request bodies are limited to 100 KB.
 
 ### 11.2 Endpoints
@@ -213,8 +215,8 @@ create ──► todo ──POST /complete──► completed
 | `GET` | `/api/v1/tasks` | `200` | List, search, filter, sort, paginate |
 | `GET` | `/api/v1/tasks/:id` | `200` | Returns task |
 | `PATCH` | `/api/v1/tasks/:id` | `200` | Partial content update |
-| `DELETE` | `/api/v1/tasks/:id` | `204` | No body |
-| `POST` | `/api/v1/tasks/:id/complete` | `200` | Idempotent; returns updated task |
+| `DELETE` | `/api/v1/tasks/:id` | `204` | No request or response body |
+| `POST` | `/api/v1/tasks/:id/complete` | `200` | No request body; idempotent; returns updated task |
 | `GET` | `/healthz` | `200` | `{ "status": "ok" }` |
 
 ### 11.3 Create task
@@ -293,6 +295,7 @@ Success: `200` with the updated task.
 - The task is removed from all subsequent reads, searches, and filters.
 - Deleting the same task again returns `404`.
 - Completed tasks are deletable.
+- Any supplied request body returns `400 VALIDATION_ERROR`.
 
 ### 11.8 Complete task
 

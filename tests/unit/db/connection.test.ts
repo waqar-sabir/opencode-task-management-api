@@ -1,4 +1,10 @@
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -71,13 +77,16 @@ describe("openDatabase", () => {
 
   it("leaves an existing directory's permissions alone", () => {
     const root = temporaryDirectory();
+    if (process.platform !== "win32") {
+      chmodSync(root, 0o755);
+    }
     const path = join(root, "tasks.db");
 
     const database = openDatabase(path);
     closeDatabase(database);
 
     if (process.platform !== "win32") {
-      expect(statSync(root).mode & 0o777).toBe(0o700);
+      expect(statSync(root).mode & 0o777).toBe(0o755);
     }
   });
 

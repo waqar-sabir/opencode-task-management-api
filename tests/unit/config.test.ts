@@ -32,6 +32,12 @@ describe("loadConfig", () => {
     expect(Object.isFrozen(loadConfig({}))).toBe(true);
   });
 
+  it("trims a padded host value", () => {
+    const config = loadConfig({ HOST: " 127.0.0.1 " });
+
+    expect(config.host).toBe("127.0.0.1");
+  });
+
   it("fails fast on an invalid port", () => {
     expect(() => loadConfig({ PORT: "70000" })).toThrow(
       /Invalid environment configuration: PORT/,

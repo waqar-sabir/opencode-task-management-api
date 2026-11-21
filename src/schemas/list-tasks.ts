@@ -12,6 +12,22 @@ function withDefault<T>(fallback: T) {
   return (value: unknown): unknown => (value === undefined ? fallback : value);
 }
 
+/** Accept only canonical positive integer strings, then enforce the range. */
+function integerParameter(
+  defaultValue: number,
+  min: number,
+  max = Number.MAX_SAFE_INTEGER,
+) {
+  return z.preprocess(
+    withDefault(String(defaultValue)),
+    z
+      .string()
+      .regex(/^[1-9]\d*$/, "Must be a positive integer")
+      .transform(Number)
+      .pipe(z.number().int().min(min).max(max)),
+  );
+}
+
 export const listTasksQuerySchema = z.strictObject({
   q: z
     .string()
@@ -21,11 +37,8 @@ export const listTasksQuerySchema = z.strictObject({
     })
     .optional(),
   status: z.enum(["todo", "completed"]).optional(),
-  page: z.preprocess(withDefault(DEFAULT_PAGE), z.coerce.number().int().min(1)),
-  limit: z.preprocess(
-    withDefault(DEFAULT_LIMIT),
-    z.coerce.number().int().min(1).max(MAX_LIMIT),
-  ),
+  page: integerParameter(DEFAULT_PAGE, 1),
+  limit: integerParameter(DEFAULT_LIMIT, 1, MAX_LIMIT),
   sort: z.preprocess(
     withDefault("createdAt"),
     z.enum(["createdAt", "updatedAt", "title"]),

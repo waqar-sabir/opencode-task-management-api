@@ -29,9 +29,7 @@ function requireJsonContentType(): RequestHandler {
       return;
     }
 
-    const contentType = request.headers["content-type"] ?? "";
-
-    if (contentType.toLowerCase().includes("application/json")) {
+    if (request.is("application/json")) {
       next();
       return;
     }

@@ -1,5 +1,6 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 
+import { AppError } from "../errors.js";
 import { listTasksQuerySchema } from "../schemas/list-tasks.js";
 import {
   createTaskSchema,
@@ -7,6 +8,18 @@ import {
   updateTaskSchema,
 } from "../schemas/task.js";
 import type { TaskService } from "../services/tasks.js";
+
+/** Reject any body on endpoints that are defined as bodyless by the spec. */
+function rejectRequestBody(request: Request): void {
+  const contentLength = request.headers["content-length"];
+  const hasDeclaredBody =
+    (contentLength !== undefined && contentLength !== "0") ||
+    request.headers["transfer-encoding"] !== undefined;
+
+  if (hasDeclaredBody || request.body !== undefined) {
+    throw AppError.validation("This endpoint does not accept a request body");
+  }
+}
 
 export function createTaskRouter(service: TaskService): Router {
   const router = Router();
@@ -46,6 +59,7 @@ export function createTaskRouter(service: TaskService): Router {
   });
 
   router.delete("/:id", async (request, response) => {
+    rejectRequestBody(request);
     const id = taskIdSchema.parse(request.params.id);
     await service.deleteTask(id);
 
@@ -53,6 +67,7 @@ export function createTaskRouter(service: TaskService): Router {
   });
 
   router.post("/:id/complete", async (request, response) => {
+    rejectRequestBody(request);
     const id = taskIdSchema.parse(request.params.id);
     const task = await service.completeTask(id);
 

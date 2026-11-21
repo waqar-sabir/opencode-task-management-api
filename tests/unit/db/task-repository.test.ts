@@ -228,12 +228,30 @@ describe("list", () => {
     expect(byDescription.items[0]?.title).toBe("Buy milk");
   });
 
+  it("does not match across the title/description boundary", async () => {
+    await repository.create(record({ title: "alpha", description: "beta" }));
+    await repository.create(record({ title: "alpha\nbeta", description: "" }));
+
+    const page = await repository.list(listQuery({ q: "alpha\nbeta" }));
+
+    expect(page.total).toBe(1);
+    expect(page.items[0]?.title).toBe("alpha\nbeta");
+  });
+
   it("matches non-ASCII case pairs", async () => {
     await repository.create(record({ title: "Café run" }));
 
     const page = await repository.list(listQuery({ q: "CAFÉ" }));
 
     expect(page.total).toBe(1);
+  });
+
+  it("does not fold accents", async () => {
+    await repository.create(record({ title: "Café run" }));
+
+    const page = await repository.list(listQuery({ q: "cafe" }));
+
+    expect(page.total).toBe(0);
   });
 
   it("treats LIKE metacharacters literally", async () => {
@@ -356,7 +374,15 @@ describe("database constraints", () => {
     expect(() => insertRaw({ title: "x".repeat(201) })).toThrow();
   });
 
+  it("counts astral title characters as code points", () => {
+    expect(() => insertRaw({ title: "😀".repeat(201) })).toThrow();
+  });
+
   it("rejects a description over 2000 characters", () => {
     expect(() => insertRaw({ description: "x".repeat(2001) })).toThrow();
+  });
+
+  it("counts astral description characters as code points", () => {
+    expect(() => insertRaw({ description: "😀".repeat(2001) })).toThrow();
   });
 });

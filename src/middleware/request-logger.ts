@@ -14,10 +14,9 @@ export function createLogger(level: string): Logger {
 export function requestLogger(logger: Logger): RequestHandler {
   return (request, response, next) => {
     const incoming = request.header("x-request-id");
+    const trimmed = typeof incoming === "string" ? incoming.trim() : "";
     const requestId =
-      typeof incoming === "string" && incoming.trim().length > 0
-        ? incoming.trim()
-        : randomUUID();
+      trimmed.length > 0 && trimmed.length <= 128 ? trimmed : randomUUID();
 
     // Capture before routing strips the mount path; drop the query string
     // because it may contain user search text.

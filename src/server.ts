@@ -14,45 +14,46 @@ function start(): void {
 
   const database = openDatabase(config.databasePath);
 
+  let server: Server;
   try {
     migrate(database);
+
+    const repository = new SqliteTaskRepository(database);
+    const app = createApp({
+      repository,
+      logger,
+      healthCheck: () => {
+        database.prepare("SELECT 1").get();
+      },
+    });
+
+    server = app.listen(config.port, config.host, () => {
+      const address = server.address();
+      const port =
+        typeof address === "object" && address !== null
+          ? address.port
+          : config.port;
+
+      logger.info(
+        {
+          url: `http://${config.host}:${port}`,
+          nodeEnv: config.nodeEnv,
+          databasePath: config.databasePath,
+        },
+        "listening",
+      );
+
+      if (!isLoopbackHost(config.host)) {
+        logger.warn(
+          { host: config.host },
+          "API is bound to a non-loopback host and has no authentication",
+        );
+      }
+    });
   } catch (error) {
     closeDatabase(database);
     throw error;
   }
-
-  const repository = new SqliteTaskRepository(database);
-  const app = createApp({
-    repository,
-    logger,
-    healthCheck: () => {
-      database.prepare("SELECT 1").get();
-    },
-  });
-
-  const server: Server = app.listen(config.port, config.host, () => {
-    const address = server.address();
-    const port =
-      typeof address === "object" && address !== null
-        ? address.port
-        : config.port;
-
-    logger.info(
-      {
-        url: `http://${config.host}:${port}`,
-        nodeEnv: config.nodeEnv,
-        databasePath: config.databasePath,
-      },
-      "listening",
-    );
-
-    if (!isLoopbackHost(config.host)) {
-      logger.warn(
-        { host: config.host },
-        "API is bound to a non-loopback host and has no authentication",
-      );
-    }
-  });
 
   server.on("error", (error) => {
     logger.error({ err: error }, "server failed");

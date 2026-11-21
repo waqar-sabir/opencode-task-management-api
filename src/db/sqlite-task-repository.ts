@@ -38,7 +38,16 @@ export function escapeLike(value: string): string {
 }
 
 export class SqliteTaskRepository implements TaskRepository {
-  constructor(private readonly database: DatabaseSync) {}
+  constructor(private readonly database: DatabaseSync) {
+    // Used only for queries that contain a newline. Searching the concatenated
+    // `search_text` column would otherwise match across the title/description
+    // boundary, which is not a substring of either field.
+    this.database.function(
+      "normalize_task_search",
+      { deterministic: true },
+      (value) => normalizeForSearch(String(value)),
+    );
+  }
 
   async create(input: CreateTaskRecord): Promise<Task> {
     const row = this.database
@@ -81,8 +90,17 @@ export class SqliteTaskRepository implements TaskRepository {
 
     const term = query.q?.trim() ?? "";
     if (term.length > 0) {
-      clauses.push("search_text LIKE ? ESCAPE '\\'");
-      parameters.push(`%${escapeLike(normalizeForSearch(term))}%`);
+      const pattern = `%${escapeLike(normalizeForSearch(term))}%`;
+
+      if (term.includes("\n")) {
+        clauses.push(
+          "(normalize_task_search(title) LIKE ? ESCAPE '\\' OR normalize_task_search(description) LIKE ? ESCAPE '\\')",
+        );
+        parameters.push(pattern, pattern);
+      } else {
+        clauses.push("search_text LIKE ? ESCAPE '\\'");
+        parameters.push(pattern);
+      }
     }
 
     const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
