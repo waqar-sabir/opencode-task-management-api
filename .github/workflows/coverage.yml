@@ -38,7 +38,6 @@ jobs:
           comment_mode: update
           script: |
             # Coverage summary placeholder
-            # Parse API and dashboard coverage output here
             api_summary = 'API coverage: see artifact';
             dashboard_summary = 'Dashboard coverage: see artifact';
             // Comment on PR with both summaries
