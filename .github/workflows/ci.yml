@@ -131,6 +131,10 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Install dashboard dependencies
+        run: npm install
+        working-directory: ./dashboard
+
       - name: Build API
         run: npm run build
 
@@ -162,6 +166,10 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+
+      - name: Install dashboard dependencies
+        run: npm install
+        working-directory: ./dashboard
 
       - name: Run full verification
         run: npm run verify:all
