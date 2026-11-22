@@ -25,6 +25,10 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Install dashboard dependencies
+        run: npm install
+        working-directory: ./dashboard
+
       - name: Run API coverage
         run: npm run test:coverage
 
