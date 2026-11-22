@@ -28,7 +28,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Run ESLint
         run: npm run lint
@@ -57,7 +57,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Run API test suite
         run: npm run test
@@ -93,7 +93,7 @@ jobs:
           cache: "npm"
 
       - name: Install dashboard dependencies
-        run: npm ci
+        run: npm install
 
       - name: Run dashboard test suite
         run: npm run test
@@ -161,7 +161,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Run full verification
         run: npm run verify:all
