@@ -1,54 +1,32 @@
-import { chmodSync, existsSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { Pool } from "pg";
 
-const BUSY_TIMEOUT_MS = 5000;
-
-/**
- * Open a SQLite database, create the parent directory if needed, and apply the
- * pragmas required by ARCHITECTURE.md §7.3.
- *
- * `:memory:` skips all filesystem work and is used by tests.
- */
-export function openDatabase(databasePath: string): DatabaseSync {
-  if (databasePath === ":memory:") {
-    const database = new DatabaseSync(":memory:");
-    configure(database);
-    return database;
-  }
-
-  const resolvedPath = resolve(databasePath);
-  const directory = dirname(resolvedPath);
-
-  if (!existsSync(directory)) {
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    if (process.platform !== "win32") {
-      // mkdir mode is masked by the process umask; enforce it explicitly.
-      chmodSync(directory, 0o700);
-    }
-  }
-
-  const database = new DatabaseSync(resolvedPath);
-  configure(database);
-
-  if (process.platform !== "win32") {
-    chmodSync(resolvedPath, 0o600);
-  }
-
-  return database;
+export interface DatabaseOptions {
+  readonly connectionString: string;
+  readonly ssl?: boolean;
+  readonly max?: number;
+  /** PostgreSQL `options` string, used by tests to select a schema. */
+  readonly options?: string;
 }
 
-export function closeDatabase(database: DatabaseSync): void {
-  if (database.isOpen) {
-    database.close();
-  }
+/** Create the only connection pool the process owns. */
+export function createDatabasePool(options: DatabaseOptions): Pool {
+  return new Pool({
+    connectionString: options.connectionString,
+    ssl: options.ssl ? { rejectUnauthorized: false } : false,
+    max: options.max ?? 10,
+    ...(options.options ? { options: options.options } : {}),
+  });
 }
 
-function configure(database: DatabaseSync): void {
-  database.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = FULL;
-    PRAGMA foreign_keys = ON;
-    PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};
-  `);
+/** Verify the database answers; used by `/healthz` and startup checks. */
+export async function checkDatabase(pool: Pool): Promise<void> {
+  await pool.query("SELECT 1");
+}
+
+/** Close the pool. Safe to call more than once. */
+export async function closeDatabase(pool: Pool): Promise<void> {
+  if (pool.ended) {
+    return;
+  }
+  await pool.end();
 }

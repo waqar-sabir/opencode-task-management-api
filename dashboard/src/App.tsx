@@ -192,7 +192,7 @@ export function App() {
     return (
       <EmptyState
         actionLabel="Create your first task"
-        message="Add a title and an optional description. Tasks are stored in your local SQLite database."
+        message="Add a title and an optional description. Tasks are stored in your local PostgreSQL database."
         onAction={() => setCreating(true)}
         title="Nothing on the list yet"
       />
@@ -307,7 +307,7 @@ export function App() {
         <footer className="app-footer">
           <p>
             Connected to the local Task Management API. Data lives in your
-            SQLite file — nothing leaves this machine.
+            PostgreSQL database — nothing leaves this machine.
           </p>
         </footer>
       </main>

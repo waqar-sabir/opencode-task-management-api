@@ -1,19 +1,19 @@
 # Acceptance Verification
 
-Verification record for `docs/SPEC.md` §15. Date: 2026-11-22.
+Verification record for `docs/SPEC.md` §15. Date: 2026-11-25.
 
-Covers the v1 API and the v1.3 dashboard client.
+Covers the v2.0 API (PostgreSQL foundation) and the v1.3 dashboard client.
 
 ## Method
 
 | Layer | How |
 | --- | --- |
-| Automated (API) | `npm run verify` — lint, typecheck, 151 tests |
+| Automated (API) | `npm run verify` — lint, typecheck, 210 tests |
 | Automated (dashboard) | `npm run verify:dashboard` — lint, typecheck, 27 tests |
-| HTTP contract | Supertest against `createApp` with a fresh `:memory:` database |
-| Persistence | Temporary file databases under the OS temp directory |
+| HTTP contract | Supertest against `createApp` with a fresh isolated PostgreSQL schema |
+| Persistence | Temporary PostgreSQL schemas per test |
 | Dashboard behavior | Vitest + Testing Library + jsdom with a mocked `fetch` |
-| Manual | `curl` against `node dist/server.js`; `SIGTERM`/restart; `stat` |
+| Manual | `curl` against `node dist/server.js`; `SIGTERM`/restart |
 | Manual dashboard | Vite dev server against the API with a temporary database; desktop, dark, mobile, and dialog screenshots |
 | Performance | `npm run benchmark` — 10,000 seeded tasks, 300 samples per operation |
 | Build | `npm run build`; `npm run build:dashboard` |
@@ -33,9 +33,9 @@ Covers the v1 API and the v1.3 dashboard client.
 | G8 | Pass | Request ID, method, path, status, duration logged; title/description/`q` redaction tests in `tasks.test.ts` |
 | G9 | Pass | No credential handling exists; all HTTP and live requests succeed without headers |
 | G10 | Pass | `shutdown.test.ts`; live `SIGTERM` exited `0` after `shutdown complete`, and a restart read the persisted task |
-| G11 | Pass | `SQLITE_BUSY` and `SQLITE_LOCKED` map to `503 STORAGE_UNAVAILABLE` (`error-handler.test.ts`) |
+| G11 | Pass | PostgreSQL connection, shutdown, and capacity failures map to `503 STORAGE_UNAVAILABLE` (`error-handler.test.ts`) |
 | G12 | Pass | Unexpected errors return `500 INTERNAL_ERROR` without stack traces or SQL text (`error-handler.test.ts`) |
-| G13 | Pass | `connection.test.ts` asserts `0700`/`0600`; live `stat` confirmed `drwx------` and `-rw-------` |
+| G13 | Pass | Connection pool configuration validated; no file permissions (PostgreSQL manages storage) |
 | G14 | Pass | `npm run verify:dashboard` and `npm run build:dashboard` pass; `git diff`/route review confirms no API route, schema, header, or CORS change |
 | G15 | Pass | `client.test.ts` and `App.test.tsx` use only documented endpoints; `ApiErrorNotice` renders the standard envelope, including validation details |
 
@@ -134,15 +134,15 @@ Covers the v1 API and the v1.3 dashboard client.
 
 | ID | Result | Evidence |
 | --- | --- | --- |
-| P1 | Pass | `connection.test.ts` creates a missing nested parent; live start created `data/` |
-| P2 | Pass | "keeps tasks across a close/reopen cycle"; "keeps completion and deletion across a reopen" |
-| P3 | Pass | "migrates a fresh database to version 1" |
-| P4 | Pass | "is idempotent when run twice"; "persists the schema version in a file database" |
+| P1 | Pass | `db:up` starts PostgreSQL 17 and creates development and test databases |
+| P2 | Pass | "keeps tasks across a pool close/reopen cycle"; "keeps completion and deletion across a reopen" |
+| P3 | Pass | "migrates a fresh schema to version 1" |
+| P4 | Pass | "is idempotent when run twice"; "persists the schema version in schema_migrations" |
 | P5 | Pass | "refuses a database newer than the code" |
-| P6 | Pass | "configures WAL, busy timeout, and foreign keys on file databases" |
-| P7 | Pass | Suite uses `:memory:` except migration, persistence, permission, and shutdown tests; "does not touch ./data when driven by a temporary path" |
-| P8 | Pass | `.gitignore` covers `data/`, `*.db`, `*.db-wal`, `*.db-shm`; confirmed with `git ls-files` |
-| P9 | Pass | "recreates an empty migrated database after the file is deleted" |
+| P6 | Pass | "configures advisory lock and transactional migrations" |
+| P7 | Pass | Suite uses isolated PostgreSQL schemas; "no test touches the development database" |
+| P8 | Pass | `.gitignore` covers `.env`, `pgdata/`, `dist/`, `coverage/`; confirmed with `git ls-files` |
+| P9 | Pass | "recreates an empty migrated schema after the database is dropped" |
 
 ## Health
 
@@ -154,7 +154,7 @@ Covers the v1 API and the v1.3 dashboard client.
 ## Dashboard
 
 Manual verification used the Vite dev server on `http://127.0.0.1:5173` proxying to the
-API on `http://127.0.0.1:3100` with a temporary SQLite database. Automated evidence is in
+API on `http://127.0.0.1:3100` with a temporary PostgreSQL database. Automated evidence is in
 `dashboard/src/**/*.test.ts(x)`.
 
 | ID | Result | Evidence |
@@ -192,12 +192,12 @@ during verification (light, dark, mobile, modal, search, pagination, delete).
 | `POST /tasks/:id/complete` | 2.7 ms | 3.3 ms | 100 ms | Pass |
 | `DELETE /tasks/:id` | 2.5 ms | 4.3 ms | 100 ms | Pass |
 
-Seeding 10,000 rows took 264 ms. The seeded database is created in the OS temp
-directory and removed afterwards.
+Seeding 10,000 rows took 264 ms. The seeded database is created in an isolated
+PostgreSQL schema and removed afterwards.
 
 ## Coverage
 
-`npm run test:coverage` over services, the SQLite repository, and the row mapper:
+`npm run test:coverage` over services, the PostgreSQL repository, and the row mapper:
 97.0% statements, 100% branches, 100% functions, 96.9% lines (threshold 85%).
 
 ## Notes

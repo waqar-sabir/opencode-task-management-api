@@ -1,15 +1,16 @@
 import type { Task, TaskStatus } from "../repositories/task-repository.js";
 
-/** Raw row shape as returned by SQLite (snake_case, plus `search_text`). */
+/** Raw row shape as returned by PostgreSQL (snake_case). */
 export interface TaskRow {
   readonly id: string;
   readonly title: string;
   readonly description: string;
-  readonly search_text: string;
+  readonly search_title: string;
+  readonly search_description: string;
   readonly status: string;
-  readonly created_at: string;
-  readonly updated_at: string;
-  readonly completed_at: string | null;
+  readonly created_at: Date | string;
+  readonly updated_at: Date | string;
+  readonly completed_at: Date | string | null;
 }
 
 function toStatus(value: string): TaskStatus {
@@ -19,15 +20,20 @@ function toStatus(value: string): TaskStatus {
   throw new Error(`Unexpected task status in storage: ${value}`);
 }
 
-/** Map a storage row to the domain object; `search_text` never escapes. */
+function toIso(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
+/** Map a storage row to the domain object; search columns never escape. */
 export function toTask(row: TaskRow): Task {
   return {
     id: row.id,
     title: row.title,
     description: row.description,
     status: toStatus(row.status),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    completedAt: row.completed_at,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
+    completedAt:
+      row.completed_at === null ? null : toIso(row.completed_at),
   };
 }

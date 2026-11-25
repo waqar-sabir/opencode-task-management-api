@@ -9,7 +9,7 @@ Use these unless the user directs otherwise:
 - npm with a committed `package-lock.json`
 - Express 5, Zod, pino, Vitest + Supertest, ESLint + Prettier
 - `tsx` for dev; `tsc` builds to `dist/`
-- SQLite file persistence via the built-in `node:sqlite` (`DatabaseSync`) behind a repository interface. No ORM, no database server. `:memory:` is used only in tests.
+- PostgreSQL 17 persistence via `pg` connection pool, explicit SQL, and `schema_migrations` + `pg_advisory_lock` behind a repository interface. No ORM, no database server in the API process. Each test gets an isolated schema.
 
 ## Commands (define these in `package.json`)
 | Script | Command |
@@ -21,6 +21,11 @@ Use these unless the user directs otherwise:
 | `format` | `prettier --write .` |
 | `format:check` | `prettier --check .` |
 | `typecheck` | `tsc --noEmit` |
+| `db:up` | Start PostgreSQL 17 via Docker Compose |
+| `db:down` | Stop the PostgreSQL service |
+| `db:logs` | Stream PostgreSQL logs |
+| `db:migrate` | Run pending migrations |
+| `db:reset` | Drop and recreate the database |
 | `test` | `vitest run` |
 | `test:watch` | `vitest` |
 | `test:coverage` | `vitest run --coverage` |
@@ -50,7 +55,7 @@ src/
   schemas/       # Zod request/response schemas + z.infer types
   services/      # business rules, framework-free
   repositories/  # storage interface only
-  db/            # connection, migrations, row mapper, SQLite repository
+  db/            # connection, migrations, row mapper, PostgreSQL repository
   middleware/    # error handler, request logging
 scripts/
   benchmark.ts   # manual 10k-task performance run; excluded from the build
@@ -63,14 +68,14 @@ tests/
 - Validate every body, query, and param with Zod. Derive types via `z.infer`; do not hand-write duplicate interfaces.
 - Keep `services/` free of Express types and I/O concerns; pass plain objects in and out.
 - Validate env in `config.ts` with Zod at startup and fail fast. Do not touch `process.env` elsewhere.
-- JSON errors: `{ "error": { "code", "message", "details"? } }`. Use 400 for validation, 404 for missing, 413 for an oversized body, 415 for a wrong media type, 503 for unavailable storage, and 500 for unexpected failures. There is no 409: v1 has no conflict case.
+- JSON errors: `{ "error": { "code", "message", "details"? } }`. Use 400 for validation, 404 for missing, 413 for an oversized body, 415 for a wrong media type, 409 for a uniqueness or reference constraint violation (CONFLICT), 502 for a connector error (CONNECTOR_ERROR), 503 for unavailable storage (STORAGE_UNAVAILABLE), and 500 for unexpected failures.
 - Mount routes under `/api/v1`; expose `GET /healthz`.
 - Use UUIDs for IDs and ISO 8601 UTC strings for timestamps.
 
 ### Dashboard boundaries
 - The dashboard lives in `dashboard/` and is a Vite + React 19 + TypeScript SPA.
 - It communicates with the API only through the documented `/api/v1` endpoints.
-- It never opens SQLite or imports from `src/`.
+- It never opens PostgreSQL or imports from `src/`.
 - Its only integration point is the typed API client in `dashboard/src/api/client.ts`.
 - Dashboard tests mock `fetch`; they never start the API or touch the database.
 - Dashboard ESLint config and `tsconfig` are independent; they do not affect the API.
@@ -79,10 +84,10 @@ tests/
 ## Testing
 - Vitest + Supertest; no network or external services.
 - Build a fresh app and repository per test; never share mutable state or depend on test order.
-- Migration, persistence, and permission tests use a temporary file database; all other tests use `:memory:`. No test touches `./data`.
+- All tests use isolated PostgreSQL schemas; no test touches the development database.
 - Cover validation failures and not-found alongside happy paths.
 
 ## Repo hygiene
 - The repository is initialized on `main` with `origin` configured. Commit and push approved phase work after its gate passes; ask before rewriting history, force-pushing, or starting unrelated commits.
-- Never commit `.env`, `dist/`, `node_modules/`, `data/`, database files, WAL side files, or coverage output. `.env.example` documents every variable.
+- Never commit `.env`, `dist/`, `node_modules/`, database files, WAL/SHM files, or coverage output. `.env.example` documents every variable.
 - Keep `README.md` focused on setup, run, and test instructions; keep agent-specific rules only in this file.

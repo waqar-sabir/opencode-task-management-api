@@ -1,17 +1,23 @@
 export type ErrorCode =
   | "VALIDATION_ERROR"
   | "NOT_FOUND"
+  | "CONFLICT"
   | "PAYLOAD_TOO_LARGE"
   | "UNSUPPORTED_MEDIA_TYPE"
   | "STORAGE_UNAVAILABLE"
+  | "CONNECTOR_ERROR"
+  | "UNAUTHORIZED"
   | "INTERNAL_ERROR";
 
 export const ERROR_STATUS: Record<ErrorCode, number> = {
   VALIDATION_ERROR: 400,
   NOT_FOUND: 404,
+  CONFLICT: 409,
   PAYLOAD_TOO_LARGE: 413,
   UNSUPPORTED_MEDIA_TYPE: 415,
   STORAGE_UNAVAILABLE: 503,
+  CONNECTOR_ERROR: 502,
+  UNAUTHORIZED: 401,
   INTERNAL_ERROR: 500,
 };
 
@@ -50,6 +56,10 @@ export class AppError extends Error {
 
   static notFound(message = "Task not found"): AppError {
     return new AppError("NOT_FOUND", message);
+  }
+
+  static conflict(message = "Resource conflict"): AppError {
+    return new AppError("CONFLICT", message);
   }
 
   static validation(

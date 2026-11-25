@@ -12,8 +12,8 @@ import { createTaskService } from "./services/tasks.js";
 export interface AppDependencies {
   readonly repository: TaskRepository;
   readonly logger: Logger;
-  /** Runs the storage probe; throws when SQLite is unavailable. */
-  readonly healthCheck: () => void;
+  /** Runs the storage probe; throws when PostgreSQL is unavailable. */
+  readonly healthCheck: () => void | Promise<void>;
 }
 
 /** Writes with a body must be JSON; bodyless actions such as `/complete` are exempt. */

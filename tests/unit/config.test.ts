@@ -8,7 +8,9 @@ describe("loadConfig", () => {
       nodeEnv: "development",
       port: 3000,
       host: "127.0.0.1",
-      databasePath: "./data/tasks.db",
+      databaseUrl: "postgres://task:task@127.0.0.1:5433/task_management",
+      databaseSsl: false,
+      databasePoolMax: 10,
       logLevel: "info",
     });
   });
@@ -18,13 +20,17 @@ describe("loadConfig", () => {
       NODE_ENV: "test",
       PORT: "8080",
       HOST: "localhost",
-      DATABASE_PATH: ":memory:",
+      DATABASE_URL: "postgres://user:pass@db:5432/app",
+      DATABASE_SSL: "true",
+      DATABASE_POOL_MAX: "25",
       LOG_LEVEL: "debug",
     });
 
     expect(config.port).toBe(8080);
     expect(config.host).toBe("localhost");
-    expect(config.databasePath).toBe(":memory:");
+    expect(config.databaseUrl).toBe("postgres://user:pass@db:5432/app");
+    expect(config.databaseSsl).toBe(true);
+    expect(config.databasePoolMax).toBe(25);
     expect(config.logLevel).toBe("debug");
   });
 
@@ -41,6 +47,18 @@ describe("loadConfig", () => {
   it("fails fast on an invalid port", () => {
     expect(() => loadConfig({ PORT: "70000" })).toThrow(
       /Invalid environment configuration: PORT/,
+    );
+  });
+
+  it("fails fast on an invalid database URL", () => {
+    expect(() => loadConfig({ DATABASE_URL: "mysql://localhost/app" })).toThrow(
+      /DATABASE_URL/,
+    );
+  });
+
+  it("fails fast on an invalid pool size", () => {
+    expect(() => loadConfig({ DATABASE_POOL_MAX: "0" })).toThrow(
+      /DATABASE_POOL_MAX/,
     );
   });
 

@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
 
 import type { Express } from "express";
 import { pino } from "pino";
@@ -7,8 +6,12 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../../src/app.js";
-import { migrate } from "../../src/db/migrations.js";
-import { SqliteTaskRepository } from "../../src/db/sqlite-task-repository.js";
+import { checkDatabase } from "../../src/db/connection.js";
+import { PostgresTaskRepository } from "../../src/db/postgres-task-repository.js";
+import {
+  createTestDatabase,
+  type TestDatabase,
+} from "../helpers/database.js";
 
 const T1 = "2026-11-19T10:00:00.000Z";
 const T2 = "2026-11-19T10:01:00.000Z";
@@ -16,25 +19,22 @@ const T3 = "2026-11-19T10:02:00.000Z";
 
 const logger = pino({ level: "silent" });
 
-let database: DatabaseSync;
-let repository: SqliteTaskRepository;
+let database: TestDatabase;
+let repository: PostgresTaskRepository;
 let app: Express;
 
-beforeEach(() => {
-  database = new DatabaseSync(":memory:");
-  migrate(database);
-  repository = new SqliteTaskRepository(database);
+beforeEach(async () => {
+  database = await createTestDatabase();
+  repository = new PostgresTaskRepository(database.pool);
   app = createApp({
     repository,
     logger,
-    healthCheck: () => {
-      database.prepare("SELECT 1").get();
-    },
+    healthCheck: () => checkDatabase(database.pool),
   });
 });
 
-afterEach(() => {
-  database.close();
+afterEach(async () => {
+  await database.close();
 });
 
 function createTask(

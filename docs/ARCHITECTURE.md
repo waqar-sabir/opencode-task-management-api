@@ -1,6 +1,6 @@
 # Task Management API — Architecture
 
-**Status:** Approved v1.1 — implemented; verified 2026-11-22
+**Status:** Approved v2.0 — PostgreSQL foundation; integration layer planned
 **Date:** 2026-11-18 (v1.1 dashboard update 2026-11-22)
 **Scope:** Single-user local HTTP API with a same-origin React dashboard
 **Related documents:** [`SPEC.md`](./SPEC.md), [`PLAN.md`](./PLAN.md), [`ACCEPTANCE.md`](./ACCEPTANCE.md)
@@ -9,23 +9,26 @@
 
 ## 1. Context and constraints
 
-The system is a local, single-process HTTP API backed by one SQLite file, plus a
-separate React dashboard that consumes the API from the same origin. It has no
-authentication, no external services, and no multi-instance coordination. The
-architecture is optimized for correctness, explainability, and low operational overhead,
-not for horizontal scale.
+The system is a local, single-process HTTP API backed by PostgreSQL 17 via Docker
+Compose, plus a separate React dashboard that consumes the API from the same origin. It
+has no authentication, no external services (integrations are optional and isolated),
+and no multi-instance coordination. The architecture is optimized for correctness,
+explainability, and low operational overhead, not for horizontal scale.
 
 Hard constraints from the approved specification:
 
 - Node.js 24 LTS.
 - TypeScript with strict settings.
-- SQLite persistence; no database server.
+- PostgreSQL 17 is the only database; Docker Compose runs it locally; tests use an
+  isolated schema per test (BR-10, D2).
 - One task list per instance; no owner or tenant column.
 - Statuses are only `todo` and `completed`; completion is terminal.
 - No ORM, no CORS, no rate limiting, and no background workers.
 - Default network bind is `127.0.0.1`.
 - The dashboard is a static React SPA served separately and proxied to the API; it is
   never bundled into the Express process.
+- The API communicates with PostgreSQL through an explicit `pg` connection pool; no
+  native drivers or ORM are used.
 
 ---
 
@@ -58,10 +61,10 @@ Hard constraints from the approved specification:
 │  TaskRepository interface                                   │
 │        │                                                    │
 │        ▼                                                    │
-│  SqliteTaskRepository (SQL, transactions, row mapping)      │
+│  PostgresTaskRepository (SQL, transactions, row mapping)    │
 │        │                                                    │
 │        ▼                                                    │
-│  node:sqlite  ──►  ./data/tasks.db (+ -wal, -shm)           │
+│  pg Pool  ──►  PostgreSQL 17 (Docker Compose, port 5433)    │
 │                                                             │
 │  error middleware (single response envelope)                │
 └─────────────────────────────────────────────────────────────┘
@@ -81,10 +84,10 @@ Key structural decisions:
 - **Layer boundaries.** Routes know HTTP; services know task rules; the repository knows
   SQL. No Express types cross into services or the repository.
 - **One error path.** A single error middleware converts validation, domain, HTTP parser,
-  and SQLite failures into the response envelope.
+  and PostgreSQL failures into the response envelope.
 - **Separate clients, one contract.** The API is the only writer of task data. The
   dashboard is a static React SPA that uses the documented `/api/v1` endpoints and never
-  opens SQLite. It is a client, not a second server or a second backend.
+  opens PostgreSQL. It is a client, not a second server or a second backend.
 - **Same-origin by proxy.** The API sends no CORS headers. Vite forwards `/api` and
   `/healthz` in development and preview, and a production deployment must do the same at
   its reverse proxy. Express serves no HTML and no dashboard assets.
@@ -95,13 +98,13 @@ Key structural decisions:
 
 | Concern | Choice | Rationale |
 | --- | --- | --- |
-| Runtime | Node.js 24 LTS | LTS support window; built-in SQLite; modern ESM support |
+| Runtime | Node.js 24 LTS | LTS support window; modern ESM support; `pg` driver available |
 | Language | TypeScript, ESM | Static contracts and safer refactors |
 | HTTP framework | Express 5 | Familiar, small, promise-aware error propagation |
 | Validation | Zod | Runtime validation plus inferred TypeScript types |
 | Logging | pino + pino-http | Structured JSON, low overhead |
-| Database | `node:sqlite` (`DatabaseSync`) | Built-in, synchronous, no native add-on |
-| Tests | Vitest + Supertest | Fast unit/integration tests without network ports |
+| Database | PostgreSQL 17 via `pg` connection pool | Robust, server-backed, supports advisory locks and transactional migrations; Docker Compose for local dev |
+| Tests | Vitest + Supertest | Fast unit/integration tests with isolated per-schema PostgreSQL databases |
 | Dashboard | React 19 + Vite | Small SPA with fast dev server, proxy support, and static output |
 | Dashboard tests | Vitest + Testing Library + jsdom | Component behavior against a mocked `fetch`, no live API |
 | Dev runner | tsx | Direct TypeScript execution with watch mode |
@@ -109,17 +112,19 @@ Key structural decisions:
 | Lint/format | ESLint + Prettier | Consistent style and static checks |
 | Package manager | npm | Committed `package-lock.json` |
 
-### 3.1 Why `node:sqlite`
+### 3.1 Why PostgreSQL 17
 
-- No native compilation, prebuilt binary, or install-time toolchain.
-- Synchronous API is a good fit for a single-process local service and simplifies
-  repository tests.
-- Supports `RETURNING`, `CHECK`, WAL, and `PRAGMA user_version`, which the design uses.
-- Verified during design on Node 24.17.0 with bundled SQLite 3.53.0.
+- Runs as a separate service via Docker Compose; no native compilation or install-time
+  toolchain in the API process.
+- The `pg` driver provides an asynchronous connection pool; the API process does not
+  block on database operations.
+- Supports `RETURNING`, `CHECK`, advisory locks (`pg_advisory_lock`), `schema_migrations`
+  table, and transactional migrations, which the design uses.
+- Verified during design on Node 24 LTS with PostgreSQL 17 Alpine.
 
-Trade-off: `node:sqlite` is newer than mature third-party drivers. The runtime major is
-pinned via `.nvmrc` and `engines`, and the repository has direct tests. If the built-in
-API becomes unsuitable, `better-sqlite3` is the fallback behind the same interface.
+Trade-off: PostgreSQL requires a running database server (Docker Compose) and network
+addressability via Docker Compose. The repository interface is async-first and
+explicitly SQL-based, keeping the API process lightweight and test isolation deterministic.
 
 ### 3.2 Why no ORM
 
@@ -161,14 +166,14 @@ at a reverse proxy and update `SPEC.md`; that is not part of v1.3.
 | `src/schemas/list-tasks.ts` | Query-string schema with defaults and strict keys | Read raw `req.query` elsewhere |
 | `src/services/tasks.ts` | Create IDs/timestamps, call repository, translate absence to not-found | Use Express or SQL |
 | `src/repositories/task-repository.ts` | Storage-agnostic interface used by services | Leak SQL types |
-| `src/db/connection.ts` | Open SQLite, set pragmas, ensure directory/permissions | Implement task queries |
-| `src/db/migrations.ts` | Forward-only schema migrations via `user_version` | Depend on HTTP |
-| `src/db/sqlite-task-repository.ts` | SQL, transactions, search, pagination, idempotent completion | Return HTTP errors |
+| `src/db/connection.ts` | Open the PostgreSQL pool, configure pool settings | Implement task queries |
+| `src/db/migrations.ts` | Forward-only schema migrations via `schema_migrations` + `pg_advisory_lock` | Depend on HTTP |
+| `src/db/postgres-task-repository.ts` | SQL, transactions, search, pagination, idempotent completion | Return HTTP errors |
 | `src/db/row-mapper.ts` | Map snake_case rows to domain `Task` objects | Expose storage fields |
 | `src/middleware/request-logger.ts` | Assign/propagate request ID, emit request logs | Log body, title, description, or `q` |
 | `src/middleware/error-handler.ts` | Convert errors to the standard envelope and status | Leak stack traces or SQL |
 | `src/errors.ts` | `AppError` and stable error codes | Contain transport-specific data |
-| `dashboard/src/App.tsx` | Dashboard state, filters, mutations, dialogs, composition | Read SQLite or bypass the API |
+| `dashboard/src/App.tsx` | Dashboard state, filters, mutations, dialogs, composition | Read PostgreSQL or bypass the API |
 | `dashboard/src/api/client.ts` | Typed `/api/v1` calls, query building, error-envelope parsing | Invent endpoints or cache task content |
 | `dashboard/src/components/` | Accessible presentational UI: header, toolbar, list, rows, modals, toasts | Own server state or fetch directly |
 | `dashboard/src/hooks/` | Fetch lifecycle, debounce, counts, health, toasts | Contain domain rules beyond presentation |
@@ -223,7 +228,7 @@ task-management-api/
 │   │   ├── connection.ts
 │   │   ├── migrations.ts
 │   │   ├── row-mapper.ts
-│   │   └── sqlite-task-repository.ts
+│   │   └── postgres-task-repository.ts
 │   ├── routes/
 │   │   ├── tasks.ts
 │   │   └── health.ts
@@ -244,8 +249,7 @@ task-management-api/
 │   └── integration/
 │       ├── tasks.test.ts
 │       └── persistence.test.ts
-├── data/                  # runtime only; gitignored
-└── dist/                  # API build output; gitignored
+├── dist/                  # API build output; gitignored
 ```
 
 `dashboard/dist/` and `dashboard/coverage/` are also generated and gitignored. The
@@ -291,21 +295,22 @@ Express 5 forwards rejected promises from async handlers automatically.
 
 ### 7.1 Schema
 
-Version 1 migration:
+Version 1 migration (PostgreSQL):
 
 ```sql
 CREATE TABLE tasks (
-  id           TEXT PRIMARY KEY,
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title        TEXT NOT NULL
                CHECK (length(trim(title)) > 0 AND length(title) <= 200),
   description  TEXT NOT NULL DEFAULT ''
                CHECK (length(description) <= 2000),
-  search_text  TEXT NOT NULL,
-  status       TEXT NOT NULL DEFAULT 'todo'
+  search_title       TEXT NOT NULL,
+  search_description TEXT NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'todo'
                CHECK (status IN ('todo', 'completed')),
-  created_at   TEXT NOT NULL,
-  updated_at   TEXT NOT NULL,
-  completed_at TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ,
   CHECK ((status = 'completed') = (completed_at IS NOT NULL))
 );
 
@@ -318,14 +323,14 @@ CREATE INDEX idx_tasks_status_created_at
 
 Column notes:
 
-- `id`: UUID v4 string from `crypto.randomUUID()`.
-- `title`: trimmed by the service; SQLite `length()` counts Unicode characters, matching
-  the code-point rule. The `trim()` check is defense in depth; the service trims all
-  whitespace.
+- `id`: UUID v4 generated by `gen_random_uuid()`.
+- `title`: trimmed by the service; the `trim()` check is defense in depth; the service
+  trims all whitespace.
 - `description`: stored as supplied; omitted becomes `""`.
-- `search_text`: derived, normalized, never exposed. See §7.6.
+- `search_title` and `search_description`: derived, normalized, never exposed. See §7.6.
 - `status`: constrained to two values.
-- `created_at` / `updated_at`: ISO 8601 UTC strings with milliseconds.
+- `created_at` / `updated_at`: ISO 8601 UTC timestamps with milliseconds; stored as
+  `TIMESTAMPTZ` with `DEFAULT now()`.
 - `completed_at`: `NULL` for `todo`; non-null for `completed`, enforced by a `CHECK`.
 
 ### 7.2 Indexes
@@ -337,41 +342,34 @@ Column notes:
 - No index accelerates leading-wildcard search. A full scan over 10,000 short rows is
   cheap; FTS5 is deferred.
 
-### 7.3 Connection and pragmas
+### 7.3 Connection pool
 
 ```ts
-const db = new DatabaseSync(resolvedPath);
-db.exec(`
-  PRAGMA journal_mode = WAL;
-  PRAGMA synchronous = FULL;
-  PRAGMA foreign_keys = ON;
-  PRAGMA busy_timeout = 5000;
-`);
+import { Pool } from "pg";
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
 ```
 
-- **WAL** allows readers during writes and creates `-wal` / `-shm` side files.
-- **`synchronous=FULL`** honors the durability requirement: a successful commit is
-  durable before the response. The cost is one fsync per write, acceptable at 10 rps.
-- **`busy_timeout`** waits up to five seconds for a lock before returning an error.
-- **`foreign_keys`** is enabled for future schema growth; v1 has no foreign keys.
-- One `DatabaseSync` instance exists per process. It is opened in `server.ts`, passed to
-  the repository, and closed during shutdown.
-- The parent directory is created recursively with mode `0700`; the database file is
-  changed to `0600` on POSIX. This matters because there is no authentication.
-- `:memory:` skips filesystem setup and is used by tests.
+- One `Pool` instance exists per process. It is opened in `server.ts`, passed to the
+  repository, and closed during shutdown.
+- The pool uses `statement_timeout` and `idle_timeout` for safety; `connection_timeout`
+  is configured per environment.
+- No `PRAGMA` settings are needed; PostgreSQL defaults are used.
+- `:memory:` is not available with PostgreSQL; every test gets its own isolated schema (see §7.7).
 
 ### 7.4 Migrations
 
-- Schema version is stored in `PRAGMA user_version`.
+- Schema version is stored in a `schema_migrations` table.
 - Migrations are an ordered array of `{ version, sql }`, applied forward only.
-- Each migration runs inside `BEGIN IMMEDIATE`; the version update is committed in the
-  same transaction. A failure rolls back.
-- Startup fails with a clear message if the database version is newer than the code’s
+- Each migration runs inside `BEGIN; SELECT pg_advisory_lock($1); ... COMMIT`; the
+  version insert is committed in the same transaction. A failure rolls back.
+- Startup fails with a clear message if the migration version is newer than the code's
   latest migration.
 - No down migrations in v1.
 - Migration 1 creates the table and both indexes.
-- Tests run the same migration path against `:memory:`; persistence tests also exercise
-  a temporary file database.
+- Every test creates and drops an isolated schema; no test shares DB state (BR-10, D2).
 
 ### 7.5 Repository contract
 
@@ -424,20 +422,20 @@ export interface TaskRepository {
 }
 ```
 
-The interface is async even though SQLite calls are synchronous. This keeps services and
-tests independent of the driver and leaves room for an asynchronous adapter later.
+The interface is async because `pg` queries are asynchronous. This keeps services and
+tests independent of the driver and leaves room for connection pooling later.
 
 ### 7.6 Search text and normalization
 
-SQLite’s `LIKE` and `COLLATE NOCASE` fold ASCII only. To make case-insensitive matching
-work for non-ASCII case pairs, the repository stores a derived `search_text` column:
+PostgreSQL's `ILIKE` folds ASCII only. To make case-insensitive matching work for
+non-ASCII case pairs, the repository stores two derived columns (`search_title`,
+`search_description`):
 
 ```ts
 const normalizeForSearch = (value: string) =>
   value.normalize("NFC").toLowerCase();
 
-const makeSearchText = (title: string, description: string) =>
-  normalizeForSearch(`${title}\n${description}`);
+const makeSearchText = (value: string) => normalizeForSearch(value);
 
 const escapeLike = (value: string) =>
   value.replace(/[\\%_]/g, (character) => `\\${character}`);
@@ -445,13 +443,13 @@ const escapeLike = (value: string) =>
 const pattern = `%${escapeLike(normalizeForSearch(q))}%`;
 ```
 
-- `search_text` is recomputed on create and whenever title or description changes.
-- It is never returned by the API.
+- `search_title` and `search_description` are recomputed on create and whenever title or description changes.
+- They are never returned by the API.
 - `%`, `_`, and `\` in user input are escaped and matched literally.
 - `q` is trimmed by the service; empty values skip the search clause.
 - Matching is case-insensitive but not accent-insensitive. `cafe` does not match `café`.
 - Because both sides are normalized in JavaScript, `CAFÉ` matches `café` even though
-  SQLite itself only folds ASCII.
+  PostgreSQL itself only folds ASCII.
 
 ### 7.7 Query patterns
 
@@ -488,18 +486,17 @@ if (q) {
 }
 
 const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-const total = db
-  .prepare(`SELECT COUNT(*) AS total FROM tasks ${whereSql}`)
-  .get(...params) as { total: number };
+const total = await pool
+  .query(`SELECT COUNT(*) AS total FROM tasks ${whereSql}`, params)
+  .then((r) => r.rows[0].total);
 
-const rows = db
-  .prepare(`
+const rows = await pool
+  .query(`
     SELECT * FROM tasks
     ${whereSql}
     ORDER BY ${sortColumn} ${direction}, id ${direction}
     LIMIT ? OFFSET ?
-  `)
-  .all(...params, limit, (page - 1) * limit);
+  `, params.concat(limit, (page - 1) * limit));
 ```
 
 - `sortColumn` comes from a fixed map:
@@ -543,23 +540,25 @@ WHERE id = ?
 RETURNING *;
 ```
 
-- SQLite evaluates `SET` expressions against the old row.
+- PostgreSQL evaluates `SET` expressions against the old row.
 - The first call sets `completed_at` and `updated_at`.
 - Repeat calls preserve both values, so the operation is idempotent.
 - No read-modify-write sequence is needed, so the operation is atomic.
 
 ### 7.8 Transactions and concurrency
 
-- One writer process; WAL permits readers during writes.
-- `updateContent` uses `BEGIN IMMEDIATE` for its read-modify-write.
+- One writer process; PostgreSQL permits readers during writes via MVCC.
+- `updateContent` uses `BEGIN IMMEDIATE` with `SELECT pg_advisory_lock($1)` for its
+  read-modify-write.
 - `create`, `delete`, and `complete` are single statements.
 - Concurrent edits are last-write-wins. There is no version column or ETag in v1.
-- `SQLITE_BUSY` / `SQLITE_LOCKED` after the busy timeout maps to `503`.
-- All other SQLite errors are logged internally and returned as `500`.
+- All errors are logged internally and returned with stable codes; no PostgreSQL-specific
+  error codes.
+- `pg_advisory_lock` serializes migration startup; each migration is transactional.
 
 ### 7.9 Row mapping
 
-- Rows use snake_case; the API uses camelCase.
+- Rows use snake_case (PostgreSQL default); the API uses camelCase.
 - `row-mapper.ts` converts fields explicitly:
   `created_at → createdAt`, `updated_at → updatedAt`, `completed_at → completedAt`.
 - `status` is validated as `todo` or `completed` before being cast.
@@ -576,7 +575,7 @@ RETURNING *;
 | Wrong content type on a write body | `415 UNSUPPORTED_MEDIA_TYPE` |
 | Unknown route | `404 NOT_FOUND` |
 | Missing task | `404 NOT_FOUND` |
-| SQLite busy/locked | `503 STORAGE_UNAVAILABLE` |
+| PostgreSQL connection, shutdown, or capacity failure | `503 STORAGE_UNAVAILABLE` |
 | Any other error | `500 INTERNAL_ERROR` |
 
 The error middleware is the only place that writes error responses. It logs the full
@@ -587,21 +586,21 @@ server-side error with the request ID, then emits the sanitized envelope.
 Startup sequence in `server.ts`:
 
 1. Load and validate configuration.
-2. Open the SQLite database (create parent directory if needed).
-3. Apply pragmas and migrations.
-4. Build the repository and app.
-5. Listen on `HOST:PORT`.
-6. Register `SIGINT` and `SIGTERM` handlers.
+2. Open the PostgreSQL connection pool.
+3. Ensure `schema_migrations` table exists and acquire `pg_advisory_lock`.
+4. Run pending migrations.
+5. Build the repository and app.
+6. Listen on `HOST:PORT`.
+7. Register `SIGINT` and `SIGTERM` handlers.
 
 Shutdown sequence:
 
 1. Stop accepting new connections (`server.close`).
 2. Wait briefly for in-flight requests, then force-close if necessary.
-3. Close the SQLite connection.
+3. Close the PostgreSQL pool.
 4. Exit with a non-zero code only on failure.
 
-On POSIX, the data directory is `0700` and the database file is `0600`. This reduces
-exposure because the file itself is the security boundary.
+---
 
 ---
 
@@ -613,7 +612,7 @@ exposure because the file itself is the security boundary.
 - Unknown keys are rejected, not stripped.
 - UUID params are validated before the service is called.
 - Length limits are enforced with a helper based on `Array.from(value).length`, matching
-  SQLite’s character count.
+  PostgreSQL's character count.
 - `title` is trimmed before validation; `description` is stored as supplied.
 - `PATCH` requires at least one of `title` or `description`.
 - Query parsing applies defaults before the service call:
@@ -671,14 +670,16 @@ exports a frozen typed object.
 | `NODE_ENV` | `development` | `development`, `test`, or `production` |
 | `PORT` | `3000` | Integer 1–65535 |
 | `HOST` | `127.0.0.1` | Non-empty string |
-| `DATABASE_PATH` | `./data/tasks.db` | File path or `:memory:` |
+| `DATABASE_URL` | `postgres://task:task@127.0.0.1:5433/task_management` | Postgres connection string |
+| `DATABASE_SSL` | `false` | `true` or `false`; enables SSL for the PostgreSQL connection |
+| `DATABASE_POOL_MAX` | `10` | Integer 1–100; maximum connections in the pool |
 | `LOG_LEVEL` | `info` | pino level |
 
 Behavior:
 
 - Invalid values fail startup with a clear message.
 - Any non-loopback `HOST` logs a prominent warning that the API has no authentication.
-- `DATABASE_PATH=:memory:` is intended for tests; production use loses data on exit.
+- `DATABASE_URL` points to the PostgreSQL database; tests use isolated schemas.
 - No secrets are required, so `.env` is optional.
 - `.env.example` documents the variables but is not required to run.
 - Relative database paths resolve from the process working directory.
@@ -710,7 +711,7 @@ but does not make public deployment safe.
 Controls:
 
 - Bind `127.0.0.1` by default; warn on any non-loopback host.
-- Create the data directory as `0700` and the database file as `0600` on POSIX.
+- PostgreSQL manages storage permissions; no file-level setup is required.
 - Cap request bodies at 100 KB and `q` at 200 code points.
 - Use parameterized SQL for all values.
 - Allowlist sort columns and directions; never interpolate user input into SQL structure.
@@ -738,8 +739,8 @@ No user-provided identifier reaches SQL text.
 
 ### 11.3 Data privacy
 
-Task content stays in the local SQLite file. Logs intentionally exclude it. The database
-file is readable by the OS user running the process; file permissions are the boundary.
+Task content stays in the PostgreSQL database. Logs intentionally exclude it. The database
+is accessible only through the configured connection.
 
 ---
 
@@ -747,7 +748,7 @@ file is readable by the OS user running the process; file permissions are the bo
 
 Target: 10,000 tasks, 10 requests/second, single process.
 
-- SQLite calls are synchronous and block the event loop. At this scale, queries are
+- PostgreSQL queries are asynchronous via the `pg` pool. At this scale, queries are
   sub-millisecond to low-millisecond, and the target throughput is far below saturation.
 - Default and status-filtered lists use indexes.
 - List requests execute two queries: `COUNT(*)` and the page select. Both use the same
@@ -756,7 +757,7 @@ Target: 10,000 tasks, 10 requests/second, single process.
   is acceptable; FTS5 is deferred.
 - Sorting by `updated_at` or `title` scans and sorts; acceptable at the target.
 - `limit` is capped at 100 to bound response size.
-- WAL improves read/write overlap but does not make SQLite a multi-writer database.
+- MVCC allows readers during writes; the single-process target keeps concurrency simple.
 - `synchronous=FULL` trades some write latency for durability.
 - A manual benchmark with seeded data is part of release verification, but performance
   thresholds are not enforced as flaky CI gates.
@@ -774,20 +775,18 @@ and WAL checkpoint tuning.
 | --- | --- | --- |
 | Unit: schemas | Validation, defaults, strictness, code-point limits | Direct Zod parsing |
 | Unit: services | ID/timestamp creation, not-found translation | Fake `TaskRepository` |
-| Unit: repository | SQL behavior, search escaping, pagination, idempotency | Real SQLite `:memory:` |
-| Unit: migrations | Versioning, idempotency, newer-version failure | Temporary file DB |
+| Unit: repository | SQL behavior, search escaping, pagination, idempotency | Real PostgreSQL isolated schema |
+| Unit: migrations | Versioning, idempotency, newer-version failure | Isolated PostgreSQL schema |
 | Unit: error mapper | Validation, busy/locked, unknown errors | Direct mapper calls |
-| Integration | Full HTTP behavior via Supertest | App with `:memory:` repository |
-| Persistence | Survives close/reopen | Temporary directory + file DB |
+| Integration | Full HTTP behavior via Supertest | App with isolated PostgreSQL schema |
+| Persistence | Survives close/reopen | Temporary PostgreSQL schema |
 | Dashboard unit | API client, error parsing, formatting, form validation | Mocked `fetch`; pure functions |
 | Dashboard component | Loading, search, filter, sort, pagination, CRUD, dialogs, errors | Testing Library + jsdom with a mocked `fetch` |
 
 ### 13.2 Isolation
 
-- Every test creates a fresh database — `:memory:` for schema, service, repository, and
-  HTTP tests; a temporary file database for migration, persistence, and permission
-  tests — runs migrations, builds the app where relevant, and closes the database in
-  teardown.
+- Every test creates a fresh isolated PostgreSQL schema — runs migrations, builds the app
+  where relevant, and drops the schema in teardown.
 - No test shares a database connection or mutable global state.
 - No test reads or writes `./data`.
 - Persistence tests use `fs.mkdtemp` and remove the directory afterward.
@@ -831,6 +830,7 @@ Commands become available in Phase 0 of `PLAN.md`:
 
 ```bash
 npm ci
+npm run db:up               # start PostgreSQL 17 via Docker Compose
 npm run dev                 # tsx watch src/server.ts
 npm run build
 npm start                   # node dist/server.js
@@ -850,10 +850,10 @@ npm run verify:all          # API and dashboard
 - Proxy target: `TASK_API_URL`, default `http://127.0.0.1:3000`
 - Dashboard API base: `VITE_API_BASE_URL`, default `/api/v1`
 - Dashboard health URL: `VITE_HEALTH_URL`, default `/healthz`
-- Database: `./data/tasks.db` by default
-- Reset: stop the process, delete `data/`, restart; migrations recreate an empty schema
-- Inspect: use the `sqlite3` CLI if installed; it is not a project dependency
-- Backup: stop the process and copy the database file, or use SQLite’s backup mechanism
+- Database: PostgreSQL at `DATABASE_URL` by default (`postgres://task:task@127.0.0.1:5433/task_management`)
+- Reset: stop the process, run `npm run db:down`, restart; `npm run db:up` and migrations recreate an empty schema
+- Inspect: use the `psql` CLI; it is included with PostgreSQL
+- Backup: stop the process and use `pg_dump`, or use PostgreSQL backup mechanisms
 - Logs: JSON on stdout; set `LOG_LEVEL=debug` for development
 
 The README owns the exact setup and curl examples; this document owns the design.
@@ -864,9 +864,9 @@ The README owns the exact setup and curl examples; this document owns the design
 
 | Decision | Chosen | Rejected alternative | Reason |
 | --- | --- | --- | --- |
-| Runtime | Node 24 LTS | Node 22 | Built-in `node:sqlite` without a flag; current LTS |
-| Database driver | `node:sqlite` | `better-sqlite3` | Zero native dependencies; sufficient for one table |
-| Storage | SQLite file | In-memory; Postgres | Durability without a server; single-user scale |
+| Runtime | Node 24 LTS | Node 22 | LTS support window; modern ESM support; `pg` driver available |
+| Database driver | `pg` connection pool, explicit SQL | `node:sqlite` (`DatabaseSync`) | Robust, server-backed; no ORM; visible query behavior |
+| Storage | PostgreSQL 17 via Docker Compose; isolated schema per test | In-memory; SQLite | Durability with a server; single-user scale; test isolation |
 | Authentication | None | API key; full accounts | Approved single-user local scope |
 | Data access | Explicit SQL | ORM | Small schema; visible query behavior |
 | Status model | `todo`/`completed` | `in_progress`; reopen | Matches requested feature set; avoids transition rules |
@@ -874,9 +874,9 @@ The README owns the exact setup and curl examples; this document owns the design
 | Search | `search_text` + `LIKE` | FTS5 | Substring semantics; simpler; adequate at 10k |
 | Pagination | Offset | Cursor | Simple page numbers; concurrency accepted |
 | Concurrency | Last-write-wins | ETag/version | Single user; no collaboration requirement |
-| App wiring | Factory + injection | Module-level singleton | Test isolation; explicit dependencies |
-| Durability | WAL + `synchronous=FULL` | `NORMAL` | Meets the “committed before response” requirement |
-| Timestamps | Millisecond ISO strings | Epoch integers | Human-readable API; sortable text |
+| App wiring | Factory + injection | Module-level singleton | Test isolation; explicit dependencies; per-schema test isolation |
+| Durability | `pg` transaction commits before response | WAL + `synchronous=FULL` | Meets the "committed before response" requirement; server durability |
+| Timestamps | Millisecond ISO strings (TIMESTAMPTZ) | Epoch integers | Human-readable API; sortable text; PostgreSQL native type |
 | Dashboard | Separate React 19 + Vite SPA | Server-rendered Express views; bundled UI | Keeps the API single-purpose; fast UI dev loop |
 | Dashboard origin | Same-origin proxy; no CORS | CORS allowlist | No API change; no widened exposure |
 | Dashboard state | In-memory React state | URL or browser storage | Task content is never persisted client-side |
@@ -890,8 +890,8 @@ The README owns the exact setup and curl examples; this document owns the design
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
 | No authentication | Anyone reaching the port controls all tasks | Loopback default; warning; file permissions; document public-deployment gap |
-| `node:sqlite` API maturity | Future Node upgrade may change behavior | Pin Node major; repository tests; fallback to `better-sqlite3` |
-| Synchronous SQLite blocks event loop | Slow queries delay all requests | Indexed lists; 10k target; cap `limit`; benchmark |
+| `pg` driver maturity | Future Node upgrade may change behavior | Pin Node major; repository tests; fallback driver |
+| PostgreSQL pool exhaustion | Connection limit reached | Pool sizing, limit cap, 10k benchmark |
 | Leading-wildcard search scans | Slower search as data grows | Accept at 10k; FTS5 deferred |
 | Millisecond timestamp collisions | `updatedAt` may not strictly increase | Acceptance uses `>=`; fake timers in tests |
 | Offset pagination shifts | Pages can skip/duplicate under writes | Accepted for single-user v1; cursor deferred |
@@ -915,7 +915,7 @@ The README owns the exact setup and curl examples; this document owns the design
 
 The dashboard is a static React single-page application in `dashboard/`. It is built by
 Vite into `dashboard/dist/` and served by any static host or reverse proxy. It never runs
-inside the API process, never imports API source, and never opens SQLite. Its only
+inside the API process, never imports API source, and never opens PostgreSQL. Its only
 integration point is the documented HTTP contract:
 
 - `GET /api/v1/tasks`

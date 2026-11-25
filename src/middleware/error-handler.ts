@@ -11,12 +11,25 @@ type BodyParserError = Error & {
   statusCode?: number;
 };
 
-type SqliteFailure = Error & {
-  code?: string;
-  errcode?: number;
-};
+type DatabaseFailure = Error & { code?: string };
 
-const BUSY_CODES = new Set([5, 6]); // SQLITE_BUSY, SQLITE_LOCKED
+const STORAGE_UNAVAILABLE_CODES = new Set([
+  "57P03", // cannot_connect_now
+  "57P01", // admin_shutdown
+  "57P02", // crash_shutdown
+  "08000", // connection_exception
+  "08001", // sqlclient_unable_to_establish_sqlconnection
+  "08003", // connection_does_not_exist
+  "08004", // sqlserver_rejected_establishment_of_sqlconnection
+  "08006", // connection_failure
+  "53300", // too_many_connections
+  "40001", // serialization_failure
+  "40P01", // deadlock_detected
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+]);
 
 function isBodyParserError(error: unknown): error is BodyParserError {
   return (
@@ -26,20 +39,11 @@ function isBodyParserError(error: unknown): error is BodyParserError {
   );
 }
 
-function isSqliteBusy(error: unknown): boolean {
+function databaseCode(error: unknown): string | undefined {
   if (!(error instanceof Error)) {
-    return false;
+    return undefined;
   }
-  const failure = error as SqliteFailure;
-  if (failure.code !== "ERR_SQLITE_ERROR") {
-    return false;
-  }
-  if (typeof failure.errcode === "number" && BUSY_CODES.has(failure.errcode)) {
-    return true;
-  }
-  return /database (table )?is locked|SQLITE_BUSY|SQLITE_LOCKED/i.test(
-    failure.message,
-  );
+  return (error as DatabaseFailure).code;
 }
 
 function sendError(
@@ -117,7 +121,25 @@ function toFailure(error: unknown): Failure {
     }
   }
 
-  if (isSqliteBusy(error)) {
+  const code = databaseCode(error);
+
+  if (code === "23505" || code === "23503") {
+    return {
+      status: ERROR_STATUS.CONFLICT,
+      code: "CONFLICT",
+      message: "Resource conflict",
+    };
+  }
+
+  if (code === "22P02" || code === "22001" || code === "22007" || code === "22008") {
+    return {
+      status: ERROR_STATUS.VALIDATION_ERROR,
+      code: "VALIDATION_ERROR",
+      message: "Invalid request value",
+    };
+  }
+
+  if (code !== undefined && STORAGE_UNAVAILABLE_CODES.has(code)) {
     return {
       status: ERROR_STATUS.STORAGE_UNAVAILABLE,
       code: "STORAGE_UNAVAILABLE",

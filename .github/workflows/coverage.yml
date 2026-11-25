@@ -2,16 +2,30 @@ name: Coverage
 
 on:
   schedule:
-    - cron: '0 2 * * 0'   # Weekly Sunday 02:00 UTC
+    - cron: "0 2 * * 0" # Weekly Sunday 02:00 UTC
   workflow_dispatch:
+
+env:
+  TEST_DATABASE_URL: postgres://task:task@127.0.0.1:5433/task_management_test
 
 jobs:
   coverage:
     name: Generate Coverage Report
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: .
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: task
+          POSTGRES_PASSWORD: task
+          POSTGRES_DB: task_management_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U task -d task_management_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,10 +37,10 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Install dashboard dependencies
-        run: npm install
+        run: npm ci
         working-directory: ./dashboard
 
       - name: Run API coverage
@@ -35,13 +49,11 @@ jobs:
       - name: Run dashboard coverage
         run: npm run test:dashboard:coverage
 
-      - name: Comment on PR with coverage summary
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
         with:
-          comment_mode: update
-          script: |
-            # Coverage summary placeholder
-            api_summary = 'API coverage: see artifact';
-            dashboard_summary = 'Dashboard coverage: see artifact';
-            // Comment on PR with both summaries
+          name: coverage-reports
+          path: |
+            coverage/
+            dashboard/coverage/
+          retention-days: 30

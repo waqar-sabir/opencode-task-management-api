@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { migrate } from "../../../src/db/migrations.js";
-import { SqliteTaskRepository } from "../../../src/db/sqlite-task-repository.js";
+import { PostgresTaskRepository } from "../../../src/db/postgres-task-repository.js";
 import type {
   CreateTaskRecord,
   TaskListQuery,
 } from "../../../src/repositories/task-repository.js";
+import {
+  createTestDatabase,
+  type TestDatabase,
+} from "../../helpers/database.js";
 
 const T1 = "2026-11-19T10:00:00.000Z";
 const T2 = "2026-11-19T10:01:00.000Z";
@@ -35,17 +37,16 @@ function listQuery(overrides: Partial<TaskListQuery> = {}): TaskListQuery {
   };
 }
 
-let database: DatabaseSync;
-let repository: SqliteTaskRepository;
+let database: TestDatabase;
+let repository: PostgresTaskRepository;
 
-beforeEach(() => {
-  database = new DatabaseSync(":memory:");
-  migrate(database);
-  repository = new SqliteTaskRepository(database);
+beforeEach(async () => {
+  database = await createTestDatabase();
+  repository = new PostgresTaskRepository(database.pool);
 });
 
-afterEach(() => {
-  database.close();
+afterEach(async () => {
+  await database.close();
 });
 
 describe("create and find", () => {
@@ -321,12 +322,15 @@ describe("list", () => {
 });
 
 describe("database constraints", () => {
-  function insertRaw(overrides: Partial<Record<string, string | null>>): void {
+  async function insertRaw(
+    overrides: Partial<Record<string, string | null>>,
+  ): Promise<void> {
     const values = {
       id: randomUUID(),
       title: "Valid",
       description: "",
-      search_text: "valid",
+      search_title: "valid",
+      search_description: "",
       status: "todo",
       created_at: T1,
       updated_at: T1,
@@ -334,55 +338,58 @@ describe("database constraints", () => {
       ...overrides,
     };
 
-    database
-      .prepare(
-        `
-        INSERT INTO tasks
-          (id, title, description, search_text, status, created_at, updated_at, completed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      )
-      .run(
+    await database.pool.query(
+      `
+      INSERT INTO tasks
+        (id, title, description, search_title, search_description,
+         status, created_at, updated_at, completed_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `,
+      [
         values.id,
         values.title,
         values.description,
-        values.search_text,
+        values.search_title,
+        values.search_description,
         values.status,
         values.created_at,
         values.updated_at,
         values.completed_at,
-      );
+      ],
+    );
   }
 
-  it("rejects an unknown status", () => {
-    expect(() => insertRaw({ status: "in_progress" })).toThrow();
+  it("rejects an unknown status", async () => {
+    await expect(insertRaw({ status: "in_progress" })).rejects.toThrow();
   });
 
-  it("rejects a completed task without a completion time", () => {
-    expect(() => insertRaw({ status: "completed" })).toThrow();
+  it("rejects a completed task without a completion time", async () => {
+    await expect(insertRaw({ status: "completed" })).rejects.toThrow();
   });
 
-  it("rejects a todo task with a completion time", () => {
-    expect(() => insertRaw({ completed_at: T2 })).toThrow();
+  it("rejects a todo task with a completion time", async () => {
+    await expect(insertRaw({ completed_at: T2 })).rejects.toThrow();
   });
 
-  it("rejects an empty title", () => {
-    expect(() => insertRaw({ title: "   " })).toThrow();
+  it("rejects an empty title", async () => {
+    await expect(insertRaw({ title: "   " })).rejects.toThrow();
   });
 
-  it("rejects a title over 200 characters", () => {
-    expect(() => insertRaw({ title: "x".repeat(201) })).toThrow();
+  it("rejects a title over 200 characters", async () => {
+    await expect(insertRaw({ title: "x".repeat(201) })).rejects.toThrow();
   });
 
-  it("counts astral title characters as code points", () => {
-    expect(() => insertRaw({ title: "😀".repeat(201) })).toThrow();
+  it("counts astral title characters as code points", async () => {
+    await expect(insertRaw({ title: "😀".repeat(201) })).rejects.toThrow();
   });
 
-  it("rejects a description over 2000 characters", () => {
-    expect(() => insertRaw({ description: "x".repeat(2001) })).toThrow();
+  it("rejects a description over 2000 characters", async () => {
+    await expect(insertRaw({ description: "x".repeat(2001) })).rejects.toThrow();
   });
 
-  it("counts astral description characters as code points", () => {
-    expect(() => insertRaw({ description: "😀".repeat(2001) })).toThrow();
+  it("counts astral description characters as code points", async () => {
+    await expect(
+      insertRaw({ description: "😀".repeat(2001) }),
+    ).rejects.toThrow();
   });
 });

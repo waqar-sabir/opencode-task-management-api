@@ -8,7 +8,7 @@ import type { TaskRepository } from "../../../src/repositories/task-repository.j
 
 const logger = pino({ level: "silent" });
 
-type Failure = Error & { code?: string; errcode?: number };
+type Failure = Error & { code?: string };
 
 function repositoryThatFailsWith(error: unknown): TaskRepository {
   const failing = (() => {
@@ -33,50 +33,74 @@ function appFailingWith(error: unknown): Express {
   });
 }
 
-function sqliteError(message: string, errcode: number): Failure {
-  return Object.assign(new Error(message), {
-    code: "ERR_SQLITE_ERROR",
-    errcode,
-  });
+function databaseError(message: string, code: string): Failure {
+  return Object.assign(new Error(message), { code });
 }
 
 describe("error handler", () => {
-  it("maps SQLITE_BUSY to 503", async () => {
+  it("maps a database that cannot connect to 503", async () => {
     const response = await request(
-      appFailingWith(sqliteError("database is locked", 5)),
+      appFailingWith(
+        databaseError("the database system is starting up", "57P03"),
+      ),
     ).get("/api/v1/tasks");
 
     expect(response.status).toBe(503);
     expect(response.body.error.code).toBe("STORAGE_UNAVAILABLE");
   });
 
-  it("maps SQLITE_LOCKED to 503", async () => {
+  it("maps a refused connection to 503", async () => {
     const response = await request(
-      appFailingWith(sqliteError("database table is locked", 6)),
+      appFailingWith(databaseError("connect ECONNREFUSED", "ECONNREFUSED")),
     ).get("/api/v1/tasks");
 
     expect(response.status).toBe(503);
     expect(response.body.error.code).toBe("STORAGE_UNAVAILABLE");
   });
 
-  it("recognises a lock message without an errcode", async () => {
+  it("maps a serialization failure to 503", async () => {
     const response = await request(
-      appFailingWith(sqliteError("SQLITE_BUSY: database is locked", 0)),
+      appFailingWith(databaseError("could not serialize access", "40001")),
     ).get("/api/v1/tasks");
 
     expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe("STORAGE_UNAVAILABLE");
   });
 
-  it("maps other SQLite failures to a generic 500", async () => {
+  it("maps a unique violation to 409", async () => {
     const response = await request(
-      appFailingWith(sqliteError("no such column: secret_column", 1)),
+      appFailingWith(
+        databaseError("duplicate key value violates unique constraint", "23505"),
+      ),
+    ).get("/api/v1/tasks");
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("CONFLICT");
+  });
+
+  it("maps an invalid input value to a validation error", async () => {
+    const response = await request(
+      appFailingWith(
+        databaseError("invalid input syntax for type uuid", "22P02"),
+      ),
+    ).get("/api/v1/tasks");
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("maps other database failures to a generic 500", async () => {
+    const response = await request(
+      appFailingWith(
+        databaseError("new row violates check constraint", "23514"),
+      ),
     ).get("/api/v1/tasks");
 
     expect(response.status).toBe(500);
     expect(response.body).toEqual({
       error: { code: "INTERNAL_ERROR", message: "Unexpected error" },
     });
-    expect(JSON.stringify(response.body)).not.toContain("secret_column");
+    expect(JSON.stringify(response.body)).not.toContain("check constraint");
   });
 
   it("does not leak stack traces for unknown errors", async () => {

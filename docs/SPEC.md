@@ -1,8 +1,8 @@
 # Task Management API — Specification
 
-**Status:** Approved v1.3 — API v1 complete; companion dashboard added
-**Date:** 2026-11-18 (v1.1: 2026-11-19; v1.2: 2026-11-19; v1.3: 2026-11-22)
-**Scope:** Single-user local HTTP API with a companion web dashboard
+**Status:** Approved v2.0 — PostgreSQL foundation; integration layer planned
+**Date:** 2026-11-18 (v1.1: 2026-11-19; v1.2: 2026-11-19; v1.3: 2026-11-22; v2.0: 2026-11-25)
+**Scope:** Single-user local HTTP API with a companion web dashboard, PostgreSQL storage, and a planned provider integration layer
 **Related documents:** [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`PLAN.md`](./PLAN.md)
 
 ---
@@ -18,6 +18,12 @@ The project also ships a companion React dashboard in `dashboard/` that consumes
 same API from a browser. The dashboard is a client, not a second backend: it adds no
 endpoints and no server-side behavior.
 
+v2.0 moves durable storage from a local SQLite file to PostgreSQL and reserves an
+independent integration layer for external providers (GitHub, Google Tasks, Slack,
+Notion, MCP servers, and n8n). The task API contract is unchanged. Integration
+behavior is specified in §18 and delivered in later phases; provider logic never
+enters the task service or task repository.
+
 This document is the source of truth for externally observable behavior. Implementation
 details live in `ARCHITECTURE.md`; delivery order lives in `PLAN.md`.
 
@@ -28,13 +34,17 @@ details live in `ARCHITECTURE.md`; delivery order lives in `PLAN.md`.
 The target user tracks personal tasks and wants a small, dependable API they can call
 from scripts, a CLI, or a future client. Existing task tools are heavier than necessary:
 they require accounts, synchronization, or hosted services. The project instead provides
-a local service with a simple JSON contract and a single SQLite file.
+a local service with a simple JSON contract and a single PostgreSQL database.
 
 The API is intentionally not a team product. There is no account system and no
-multi-user isolation in v1. The trust boundary is the local machine.
+multi-user isolation. The trust boundary is the local machine.
 
 A companion dashboard provides a browser UI for the same list. It is served from the
 same origin as the API in local development so the API can keep its no-CORS posture.
+
+The planned integration layer lets the same user connect external task and messaging
+providers without changing the task API. Integrations are optional: the API and
+dashboard must remain fully usable with no provider configured.
 
 ---
 
@@ -44,10 +54,13 @@ same origin as the API in local development so the API can keep its no-CORS post
 2. Persist tasks across process and machine restarts on the same machine.
 3. Support fast retrieval through pagination, free-text search, and status filtering.
 4. Record completion time and make completion safe to retry.
-5. Keep the operational footprint to Node.js plus one SQLite file.
+5. Keep the operational footprint to Node.js, the API process, and one PostgreSQL
+   database started with Docker Compose.
 6. Produce a contract that is easy to test, document, and extend.
 7. Provide a local, keyboard-accessible dashboard that exercises the public API
    without changing it.
+8. Add external integrations and automations as independent modules that cannot
+   destabilize the task core.
 
 ---
 
@@ -63,13 +76,15 @@ The following are explicitly out of scope for v1:
 - Bulk create/update/delete or import/export.
 - CORS support, rate limiting, or public deployment hardening. The dashboard is
   same-origin, so no CORS headers are added.
-- Real-time updates, webhooks, or push notifications.
+- Real-time updates or push notifications to the dashboard. Provider push actions are
+  outbound only and are specified in §18.
 - Mobile or desktop native clients, hosted multi-user dashboards, or offline mode.
 - Dashboard features that are not backed by the API, such as drag-and-drop ordering,
   bulk edits, or client-side task storage.
 - Full-text relevance ranking or accent-insensitive search.
 - Multi-instance deployment or horizontal scaling.
-- OpenAPI generation, container images, or hosted infrastructure.
+- OpenAPI generation, production container images, or hosted infrastructure. Docker
+  Compose is a local development dependency, not a deployment target.
 
 ---
 
@@ -81,9 +96,9 @@ The following are explicitly out of scope for v1:
 | Tenancy | One task list per running instance |
 | Authentication | None |
 | Default bind address | `127.0.0.1` |
-| Storage | Local SQLite file, default `./data/tasks.db` |
-| External services | None |
-| Concurrency | Single process; last-write-wins |
+| Storage | PostgreSQL 17 via Docker Compose; isolated schema per test |
+| External services | None required; optional provider integrations in later phases |
+| Concurrency | Single API process; PostgreSQL transactions; last-write-wins for task edits |
 | Dashboard | Separate React SPA in `dashboard/`, same origin as the API via a proxy |
 | Dashboard persistence | None; task data is fetched from the API and never stored in the browser |
 | Target scale | ≤ 10,000 tasks and ≤ 10 requests/second per instance |
@@ -98,7 +113,7 @@ can reach it full read/write access. The default configuration must remain loopb
 | ID | Decision |
 | --- | --- |
 | **D1** | Single-user API; no authentication; localhost-only by default |
-| **D2** | SQLite file persistence; in-memory SQLite only in tests |
+| **D2** | PostgreSQL 17 is the only database; Docker Compose runs it locally; tests use an isolated schema per test |
 | **D3** | Statuses are `todo` and `completed`; no reopen |
 | **D4** | `PATCH` edits title/description only; completion has a dedicated endpoint |
 | **D5** | Hard delete; no archive or restore |
@@ -109,6 +124,12 @@ can reach it full read/write access. The default configuration must remain loopb
 | **D10** | Single instance; target ≤ 10,000 tasks and ≤ 10 requests/second |
 | **D11** | The companion dashboard is a separate React/Vite SPA that consumes only `/api/v1` and `/healthz`; no API changes |
 | **D12** | Dashboard and API share an origin through a dev/preview proxy or reverse proxy; the API still sends no CORS headers |
+| **D13** | Integrations live in independent modules behind a connector contract; they never import task services or repositories |
+| **D14** | Integration credentials are encrypted at rest with AES-256-GCM using `INTEGRATIONS_SECRET_KEY` |
+| **D15** | Sync is pull-based with a stored cursor; provider events trigger push actions through a transactional outbox |
+| **D16** | Automations use structured conditions and allowlisted template placeholders; no arbitrary code execution |
+| **D17** | MCP servers run as separate stdio processes and talk to the API over HTTP; they never open PostgreSQL |
+| **D18** | The dashboard gains Tasks, Integrations, Automation, and Settings tabs in a later phase; the task tab is unchanged |
 
 ---
 
@@ -124,13 +145,18 @@ can reach it full read/write access. The default configuration must remain loopb
 7. Completed tasks remain editable and deletable.
 8. A task may only become completed; it cannot return to `todo`.
 9. Pagination is offset-based; concurrent inserts/deletes may shift page contents.
-10. No external service is needed to run or test the API.
-11. The SQLite file is the durable system of record; deleting it deletes all tasks.
-12. Only one API process writes to a database file at a time.
+10. PostgreSQL is available at `DATABASE_URL`; `npm run db:up` starts the bundled
+    Docker Compose service.
+11. PostgreSQL is the durable system of record; deleting the database or schema deletes
+    all tasks.
+12. One API process owns the schema and runs migrations at startup. Test runs create
+    and drop an isolated schema per test.
 13. The dashboard is served from the same origin as the API, or behind a proxy that
     forwards `/api` and `/healthz`.
 14. Dashboard UI state (filters, page, open dialogs) is ephemeral and is never a source
     of truth.
+15. Integration credentials are supplied by the user and remain valid until revoked at
+    the provider.
 
 ---
 
@@ -143,10 +169,12 @@ can reach it full read/write access. The default configuration must remain loopb
 | **BR-3** | Creating a task requires only a title; description is optional. |
 | **BR-4** | Users can list, view, edit, delete, search, filter, and complete tasks. |
 | **BR-5** | Completion records when the task was completed and is safe to retry. |
-| **BR-6** | The API runs locally with no external services and is not exposed by default. |
+| **BR-6** | The API runs locally with PostgreSQL from Docker Compose and is not exposed by default. |
 | **BR-7** | Every response is predictable, versioned, and validated consistently. |
 | **BR-8** | One developer can run, test, reset, and extend the project without specialized infrastructure. |
 | **BR-9** | A single user can manage tasks from a local web dashboard without a separate account or service. |
+| **BR-10** | A single user can connect external providers and sync tasks without changing the task API. |
+| **BR-11** | Integrations fail independently: a provider outage never makes task CRUD unavailable. |
 
 ---
 
@@ -164,8 +192,8 @@ can reach it full read/write access. The default configuration must remain loopb
 | `updatedAt` | string | ISO 8601 UTC with milliseconds; server-generated; refreshed on accepted mutations |
 | `completedAt` | string \| null | ISO 8601 UTC with milliseconds; non-null iff `status=completed` |
 
-The internal search column `search_text` is not part of the API representation. See
-`ARCHITECTURE.md` §7.
+The internal search columns `search_title` and `search_description` are not part of the
+API representation. See `ARCHITECTURE.md` §7.
 
 ### 9.2 Invariants
 
@@ -193,6 +221,23 @@ create ──► todo ──POST /complete──► completed
 
 ---
 
+## 9.4 Configuration
+
+The API reads environment variables validated by `src/config.ts`. Every variable has a
+default; the API runs without a `.env` file.
+
+| Variable | Default | Rules |
+| --- | --- | --- |
+| `NODE_ENV` | `development` | `development`, `test`, or `production` |
+| `PORT` | `3000` | Integer 1–65535 |
+| `HOST` | `127.0.0.1` | Non-empty string; non-loopback logs a no-auth warning |
+| `DATABASE_URL` | `postgres://task:task@127.0.0.1:5433/task_management` | Postgres connection string |
+| `DATABASE_SSL` | `false` | `true` or `false`; enables SSL for the PostgreSQL connection |
+| `DATABASE_POOL_MAX` | `10` | Integer 1–100; maximum connections in the pool |
+| `LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn`, `error`, `fatal` |
+
+Invalid values fail startup. `.env.example` documents every variable.
+
 ## 10. Functional requirements
 
 | ID | Requirement | Behavior |
@@ -205,10 +250,13 @@ create ──► todo ──POST /complete──► completed
 | **FR-6** | Mark complete | `POST /api/v1/tasks/:id/complete`; sets `status=completed` and `completedAt`; idempotent |
 | **FR-7** | Search | `q` matches title or description, case-insensitively, as a substring; `%`, `_`, and `\` are literal |
 | **FR-8** | Filter by status | `status=todo\|completed`; exactly one value; combinable with search |
-| **FR-9** | Persistence | SQLite file; migrations on startup; successful writes committed before the response |
+| **FR-9** | Persistence | PostgreSQL; migrations on startup; successful writes committed before the response |
 | **FR-10** | Health | `GET /healthz`; verifies storage with `SELECT 1` |
 | **FR-11** | Validation and errors | Reject unknown fields and query parameters; one error envelope for all failures |
 | **FR-12** | Dashboard | `dashboard/` provides create, list, search, status filter, sort, pagination, edit, complete, delete, summary counts, and API health through the public API; completed tasks cannot be reopened |
+| **FR-13** | Integrations (planned) | Connect GitHub, Google Tasks, Slack, Notion, MCP, and n8n; pull-sync external tasks and push task events; see §18 |
+| **FR-14** | Automation (planned) | Evaluate structured rules against task events and dispatch connector actions; see §18 |
+| **FR-15** | Integration health (planned) | Report per-integration status, last sync, cursor, and last error without affecting task health |
 
 ---
 
@@ -358,9 +406,12 @@ Every error response uses:
 | --- | --- | --- |
 | `VALIDATION_ERROR` | `400` | Invalid JSON, body, query, UUID, or field values |
 | `NOT_FOUND` | `404` | Valid UUID with no task; unknown route |
+| `CONFLICT` | `409` | A uniqueness or reference constraint would be violated |
 | `PAYLOAD_TOO_LARGE` | `413` | Request body over 100 KB |
 | `UNSUPPORTED_MEDIA_TYPE` | `415` | `POST`/`PATCH` with a body but without `application/json` |
-| `STORAGE_UNAVAILABLE` | `503` | SQLite busy/locked beyond the configured timeout |
+| `STORAGE_UNAVAILABLE` | `503` | PostgreSQL connection, shutdown, or capacity failure |
+| `CONNECTOR_ERROR` | `502` | External provider or connector failure |
+| `UNAUTHORIZED` | `401` | Missing or invalid integration credentials |
 | `INTERNAL_ERROR` | `500` | Unexpected failure; details are logged, never returned |
 
 `details` is present only for validation errors. Internal errors never expose SQL,
@@ -411,8 +462,8 @@ stack traces, file paths, or task content.
 
 - `createdAt` (default), `updatedAt`, or `title`.
 - `order` is `asc` or `desc`; default `desc`.
-- `title` sorting is case-insensitive for ASCII via `COLLATE NOCASE`; non-ASCII order
-  follows SQLite code-point ordering.
+- `title` sorting uses `lower(title)`; the database collation determines the final
+  ordering of non-ASCII characters.
 - `id` is the tie-breaker, in the same direction as `order`.
 
 ### 12.4 Pagination
@@ -456,7 +507,7 @@ that serves the built dashboard must do the same at its reverse proxy.
 
 ### 13.3 Data and state rules
 
-- Every read and write goes through the documented API; the dashboard never opens SQLite.
+- Every read and write goes through the documented API; the dashboard never opens PostgreSQL.
 - Task content is not written to `localStorage`, `sessionStorage`, cookies, or the URL.
 - Filters, sort, page, and dialogs are in-memory UI state and reset on reload.
 - Mutations refetch the visible page and the summary counts; the dashboard does not
@@ -487,15 +538,15 @@ authentication, and per-user views are not part of v1.3.
 | ID | Requirement | Target |
 | --- | --- | --- |
 | **NFR-1** | Performance | CRUD p95 ≤ 100 ms; list/search p95 ≤ 200 ms at 10,000 tasks on a laptop; manual benchmark, not a flaky CI gate |
-| **NFR-2** | Durability | A successful write is committed to SQLite before the response; data survives restart |
+| **NFR-2** | Durability | A successful write is committed to PostgreSQL before the response; data survives restart |
 | **NFR-3** | Integrity | Database `CHECK` constraints plus service invariants; `completedAt` non-null iff completed |
-| **NFR-4** | Security | Localhost binding, 100 KB body cap, parameterized SQL, no secrets, no task content in logs, generic `500`s |
+| **NFR-4** | Security | Localhost binding, 100 KB body cap, parameterized SQL, encrypted integration secrets, no task content in logs, generic `500`s |
 | **NFR-5** | Observability | One-line JSON logs with request ID, method, path, status, and duration; no query values or body content |
 | **NFR-6** | Maintainability | Strict TypeScript; layered boundaries; `npm run verify` green; core logic coverage ≥ 85% |
-| **NFR-7** | Portability | Node 24; built-in SQLite; no native add-ons; macOS/Linux primary |
+| **NFR-7** | Portability | Node 24; PostgreSQL 17 via Docker Compose; `pg` with no ORM; macOS/Linux primary |
 | **NFR-8** | API contract | `/api/v1`; JSON UTF-8; ISO 8601 UTC; stable error shape |
-| **NFR-9** | Scale | Single process; 10,000 tasks; 10 requests/second; horizontal scaling out of scope |
-| **NFR-10** | Test isolation | Fresh database per test: `:memory:` for schema, service, repository, and HTTP tests; a temporary directory with a file database for migration, persistence, and permission tests. No shared mutable state; no test reads or writes `./data` |
+| **NFR-9** | Scale | Single API process; 10,000 tasks; 10 requests/second; horizontal scaling out of scope |
+| **NFR-10** | Test isolation | Every test creates and drops an isolated PostgreSQL schema; no shared mutable state; no test reads or writes the development database |
 | **NFR-11** | Dashboard quality | React 19 + Vite, strict TypeScript, `npm --prefix dashboard run verify` green; no UI framework |
 | **NFR-12** | Dashboard accessibility | Keyboard operation, focus management, accessible names, live announcements, reduced motion, responsive to 360 px |
 | **NFR-13** | Dashboard security | Same-origin only; no CORS; no secrets or tokens; no task content in browser storage or the URL |
@@ -506,19 +557,19 @@ authentication, and per-user views are not part of v1.3.
 
 ### Global
 
-- **G1** From a clean clone, install and `npm run verify` pass without a pre-existing database.
-- **G2** README commands start the API and dashboard and demonstrate every endpoint.
+- **G1** From a clean clone, `npm run db:up`, install, and `npm run verify` pass with an empty PostgreSQL database.
+- **G2** README commands start the database, API, and dashboard and demonstrate every endpoint.
 - **G3** Every error uses the envelope; no stack traces or SQL text reach the client.
 - **G4** Unknown body fields and query parameters return `400`.
 - **G5** All timestamps are ISO 8601 UTC with milliseconds and a trailing `Z`.
-- **G6** No secrets, `.env`, `data/`, or SQLite side files are tracked.
+- **G6** No secrets, `.env`, database files, or generated output are tracked.
 - **G7** The server binds `127.0.0.1` by default; any non-loopback `HOST` logs a no-auth warning.
 - **G8** Logs include request ID, method, path, status, and duration; they exclude titles, descriptions, and `q`.
 - **G9** Requests without credentials succeed; all clients share one task list, as documented.
-- **G10** `SIGINT`/`SIGTERM` closes the server and database cleanly; restart succeeds.
-- **G11** SQLite busy/locked beyond the timeout returns `503 STORAGE_UNAVAILABLE`.
+- **G10** `SIGINT`/`SIGTERM` closes the server and pool cleanly; restart succeeds.
+- **G11** PostgreSQL connection or availability failures return `503 STORAGE_UNAVAILABLE`.
 - **G12** Unexpected failures return `500 INTERNAL_ERROR` without implementation details.
-- **G13** On POSIX, the data directory is created with mode `0700` and the database file with mode `0600`.
+- **G13** Integration secrets, when configured, are encrypted at rest and never logged.
 - **G14** The dashboard builds and its lint, typecheck, and tests pass from a clean install; it adds no API route, schema, header, or CORS behavior.
 - **G15** The dashboard works with only the documented endpoints and shows the standard error envelope.
 
@@ -600,15 +651,15 @@ authentication, and per-user views are not part of v1.3.
 
 ### Persistence
 
-- **P1** The database file is created at `DATABASE_PATH`; a missing parent directory is created automatically.
-- **P2** Create, update, complete, and delete survive a close/reopen cycle.
-- **P3** A fresh database reports `user_version=1` after migration.
-- **P4** Reopening an existing database does not duplicate schema objects or data.
-- **P5** A database whose `user_version` is newer than the code fails startup with a clear error.
-- **P6** File databases open in WAL mode with `busy_timeout` configured.
-- **P7** Tests use `:memory:` except migration, persistence, and permission tests, which use a temporary directory; none touch `./data`.
-- **P8** `data/`, `*.db`, `*.db-wal`, and `*.db-shm` are gitignored.
-- **P9** Deleting the database file and restarting recreates an empty, migrated database.
+- **P1** `npm run db:up` starts PostgreSQL 17 and creates the development and test databases.
+- **P2** Create, update, complete, and delete survive a pool close/reopen cycle.
+- **P3** A fresh schema reaches `schema_migrations` version 1 after migration.
+- **P4** Reopening an existing schema does not duplicate schema objects or data.
+- **P5** A database whose migration version is newer than the code fails startup with a clear error.
+- **P6** Migrations run under a PostgreSQL advisory lock and each migration is transactional.
+- **P7** Every test creates and drops an isolated schema; no test touches the development database.
+- **P8** `.env`, `pgdata/`, `dist/`, and coverage output are gitignored.
+- **P9** Dropping the development database and restarting recreates an empty, migrated database.
 
 ### Health
 
@@ -659,10 +710,16 @@ authentication, and per-user views are not part of v1.3.
 | NFR-9 Scale | Manual benchmark |
 | NFR-10 Test isolation | P7 |
 | FR-12 Dashboard | UI1–UI13 |
+| FR-13 Integrations | BR-10, BR-11, §18 |
+| FR-14 Automation | BR-10, §18 |
+| FR-15 Integration health | §18 |
 | BR-9 Dashboard | UI1–UI12 |
+| BR-10 Integrations | §18 |
+| BR-11 Integration isolation | §18 |
 | NFR-11 Dashboard quality | UI1–UI13 |
 | NFR-12 Accessibility | UI11–UI12 |
 | NFR-13 Dashboard security | UI13 |
+| NFR-4 Security (integrations) | G13, §18 |
 
 ---
 
@@ -675,6 +732,56 @@ authentication, and per-user views are not part of v1.3.
 - **v1.3 (2026-11-22):** Adds the companion dashboard as a separate same-origin client.
   No API behavior, fields, limits, or error codes change; the API still has no CORS.
   Affects §1–§8, §10–§11, the new §13, and §14–§17.
+
+## 18. Integration layer (planned)
+
+### 18.1 Connector contract
+
+Integrations connect external task and messaging providers (GitHub, Google Tasks,
+Slack, Notion, MCP servers, and n8n) without changing the task API. Connector logic
+never imports task services or repositories. Each connector is an independent module
+that:
+
+- Reads validated configuration and secrets through its own entry point;
+- Normalizes provider task data into the task model and back again;
+- Pulls syncs external tasks using a stored cursor;
+- Pushes task events to the provider through a transactional outbox;
+- Never destabilizes the task core — a provider outage never makes task CRUD
+  unavailable.
+
+Integration credentials are encrypted at rest with AES-256-GCM using
+`INTEGRATIONS_SECRET_KEY` and are never logged.
+
+### 18.2 Requirements
+
+| ID | Requirement |
+|----|-------------|
+| **BR-10** | A single user can connect external providers and sync tasks without changing the task API. |
+| **BR-11** | Integrations fail independently: a provider outage never makes task CRUD unavailable. |
+| **FR-13** | Connect GitHub, Google Tasks, Slack, Notion, MCP, and n8n; pull-sync external tasks and push task events. |
+| **FR-14** | Evaluate structured rules against task events and dispatch connector actions. |
+| **FR-15** | Report per-integration status, last sync, cursor, and last error without affecting task health. |
+
+### 18.3 Approved decisions
+
+| ID | Decision |
+|----|----------|
+| **D13** | Integrations live in independent modules behind a connector contract; they never import task services or repositories. |
+| **D14** | Integration credentials are encrypted at rest with AES-256-GCM using `INTEGRATIONS_SECRET_KEY`. |
+| **D15** | Sync is pull-based with a stored cursor; provider events trigger push actions through a transactional outbox. |
+| **D16** | Automations use structured conditions and allowlisted template placeholders; no arbitrary code execution. |
+| **D17** | MCP servers run as separate stdio processes and talk to the API over HTTP; they never open PostgreSQL. |
+| **D18** | The dashboard gains Tasks, Integrations, Automation, and Settings tabs in a later phase; the task tab is unchanged. |
+
+### 18.4 Non-goals
+
+- Real-time updates or push to the dashboard from providers. Provider push actions are
+  outbound only.
+- Arbitrary code execution in automations.
+- Hosted multi-user integration infrastructure or multi-tenant connector hosting.
+
+---
+
 - Any change to HTTP behavior, data fields, status semantics, search behavior, or limits
   requires a specification update and re-approval.
 - Implementation phases and task ordering may change without altering this contract.

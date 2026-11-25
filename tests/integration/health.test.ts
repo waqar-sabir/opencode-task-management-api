@@ -1,33 +1,32 @@
-import { DatabaseSync } from "node:sqlite";
-
 import type { Express } from "express";
 import { pino } from "pino";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../../src/app.js";
-import { migrate } from "../../src/db/migrations.js";
-import { SqliteTaskRepository } from "../../src/db/sqlite-task-repository.js";
+import { checkDatabase } from "../../src/db/connection.js";
+import { PostgresTaskRepository } from "../../src/db/postgres-task-repository.js";
+import {
+  createTestDatabase,
+  type TestDatabase,
+} from "../helpers/database.js";
 
 const logger = pino({ level: "silent" });
 
-let database: DatabaseSync;
+let database: TestDatabase;
 let app: Express;
 
-beforeEach(() => {
-  database = new DatabaseSync(":memory:");
-  migrate(database);
+beforeEach(async () => {
+  database = await createTestDatabase();
   app = createApp({
-    repository: new SqliteTaskRepository(database),
+    repository: new PostgresTaskRepository(database.pool),
     logger,
-    healthCheck: () => {
-      database.prepare("SELECT 1").get();
-    },
+    healthCheck: () => checkDatabase(database.pool),
   });
 });
 
-afterEach(() => {
-  database.close();
+afterEach(async () => {
+  await database.close();
 });
 
 describe("GET /healthz", () => {
@@ -41,10 +40,10 @@ describe("GET /healthz", () => {
 
   it("returns 503 when the storage probe fails", async () => {
     const failingApp = createApp({
-      repository: new SqliteTaskRepository(database),
+      repository: new PostgresTaskRepository(database.pool),
       logger,
       healthCheck: () => {
-        throw new Error("disk gone");
+        throw new Error("database gone");
       },
     });
 

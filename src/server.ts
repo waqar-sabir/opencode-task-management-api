@@ -2,29 +2,39 @@ import type { Server } from "node:http";
 
 import { createApp } from "./app.js";
 import { isLoopbackHost, loadConfig } from "./config.js";
-import { closeDatabase, openDatabase } from "./db/connection.js";
+import {
+  checkDatabase,
+  closeDatabase,
+  createDatabasePool,
+} from "./db/connection.js";
 import { migrate } from "./db/migrations.js";
-import { SqliteTaskRepository } from "./db/sqlite-task-repository.js";
+import { PostgresTaskRepository } from "./db/postgres-task-repository.js";
 import { createLogger } from "./middleware/request-logger.js";
 import { shutdown } from "./shutdown.js";
 
-function start(): void {
+async function start(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger(config.logLevel);
 
-  const database = openDatabase(config.databasePath);
+  const pool = createDatabasePool({
+    connectionString: config.databaseUrl,
+    ssl: config.databaseSsl,
+    max: config.databasePoolMax,
+  });
+
+  pool.on("error", (error) => {
+    logger.error({ err: error }, "idle PostgreSQL client failed");
+  });
 
   let server: Server;
   try {
-    migrate(database);
+    await migrate(pool);
 
-    const repository = new SqliteTaskRepository(database);
+    const repository = new PostgresTaskRepository(pool);
     const app = createApp({
       repository,
       logger,
-      healthCheck: () => {
-        database.prepare("SELECT 1").get();
-      },
+      healthCheck: () => checkDatabase(pool),
     });
 
     server = app.listen(config.port, config.host, () => {
@@ -38,7 +48,7 @@ function start(): void {
         {
           url: `http://${config.host}:${port}`,
           nodeEnv: config.nodeEnv,
-          databasePath: config.databasePath,
+          database: redactDatabaseUrl(config.databaseUrl),
         },
         "listening",
       );
@@ -51,13 +61,13 @@ function start(): void {
       }
     });
   } catch (error) {
-    closeDatabase(database);
+    await closeDatabase(pool);
     throw error;
   }
 
   server.on("error", (error) => {
     logger.error({ err: error }, "server failed");
-    closeDatabase(database);
+    void closeDatabase(pool);
     process.exitCode = 1;
   });
 
@@ -71,7 +81,7 @@ function start(): void {
 
     logger.info({ signal }, "shutdown requested");
 
-    shutdown({ server, database, logger })
+    shutdown({ server, database: pool, logger })
       .then(() => {
         process.exitCode = 0;
       })
@@ -88,11 +98,22 @@ function start(): void {
   }
 }
 
-try {
-  start();
-} catch (error) {
+/** Never log database credentials. */
+function redactDatabaseUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    if (url.password) {
+      url.password = "***";
+    }
+    return url.toString();
+  } catch {
+    return "(unparseable database URL)";
+  }
+}
+
+start().catch((error: unknown) => {
   // Config may be invalid, so build a logger without it.
   const logger = createLogger("info");
   logger.fatal({ err: error }, "startup failed");
   process.exitCode = 1;
-}
+});

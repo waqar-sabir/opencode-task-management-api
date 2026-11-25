@@ -1,12 +1,8 @@
 node_modules/
 dist/
 coverage/
-data/
-*.db
-*.db-wal
-*.db-shm
-*.db-journal
 .env
+pgdata/
 .DS_Store
 .playwright-mcp/
 dashboard/dist/

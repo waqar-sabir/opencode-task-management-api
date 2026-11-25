@@ -1,48 +1,38 @@
-import { mkdtempSync, rmSync } from "node:fs";
 import type { Server } from "node:http";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 
 import { pino } from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../../src/app.js";
-import { openDatabase } from "../../src/db/connection.js";
-import { migrate } from "../../src/db/migrations.js";
-import { SqliteTaskRepository } from "../../src/db/sqlite-task-repository.js";
+import { checkDatabase } from "../../src/db/connection.js";
+import { PostgresTaskRepository } from "../../src/db/postgres-task-repository.js";
 import { shutdown } from "../../src/shutdown.js";
+import {
+  connectToSchema,
+  createTestDatabase,
+  type TestDatabase,
+} from "../helpers/database.js";
 
 const logger = pino({ level: "silent" });
-const temporaryDirectories: string[] = [];
+const databases: TestDatabase[] = [];
 
-function temporaryDatabasePath(): string {
-  const directory = mkdtempSync(join(tmpdir(), "task-api-shutdown-"));
-  temporaryDirectories.push(directory);
-  return join(directory, "tasks.db");
-}
-
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
+afterEach(async () => {
+  for (const database of databases.splice(0)) {
+    await database.close();
   }
 });
 
 describe("shutdown", () => {
-  it("stops the server, closes the database, and leaves it reopenable", async () => {
-    const path = temporaryDatabasePath();
-    const database = openDatabase(path);
-    migrate(database);
-    const repository = new SqliteTaskRepository(database);
+  it("stops the server, closes the pool, and leaves data in PostgreSQL", async () => {
+    const database = await createTestDatabase();
+    databases.push(database);
 
     const app = createApp({
-      repository,
+      repository: new PostgresTaskRepository(database.pool),
       logger,
-      healthCheck: () => {
-        database.prepare("SELECT 1").get();
-      },
+      healthCheck: () => checkDatabase(database.pool),
     });
 
     const server = await new Promise<Server>((resolve) => {
@@ -60,37 +50,41 @@ describe("shutdown", () => {
 
     expect(created.status).toBe(201);
 
-    await shutdown({ server, database, logger });
+    await shutdown({ server, database: database.pool, logger });
 
     expect(server.listening).toBe(false);
-    expect(database.isOpen).toBe(false);
+    expect(database.pool.ended).toBe(true);
 
-    const reopened = new DatabaseSync(path);
-    const row = reopened
-      .prepare("SELECT COUNT(*) AS total FROM tasks")
-      .get() as unknown as { total: number };
-    expect(row.total).toBe(1);
-    reopened.close();
+    const reopened = connectToSchema(database.schema);
+    try {
+      const row = await reopened.query<{ total: number }>(
+        "SELECT COUNT(*)::int AS total FROM tasks",
+      );
+      expect(row.rows[0]?.total).toBe(1);
+    } finally {
+      await reopened.end();
+    }
   });
 
-  it("closes the database even when the server was never listening", async () => {
-    const database = openDatabase(":memory:");
-    migrate(database);
-
+  it("closes the pool even when the server was never listening", async () => {
+    const database = await createTestDatabase();
+    databases.push(database);
     const server = createServer();
+
     await expect(
-      shutdown({ server, database, logger, timeoutMs: 50 }),
+      shutdown({ server, database: database.pool, logger, timeoutMs: 50 }),
     ).resolves.toBeUndefined();
-    expect(database.isOpen).toBe(false);
+    expect(database.pool.ended).toBe(true);
   });
 
-  it("is safe to call with an already closed database", async () => {
-    const database = openDatabase(":memory:");
+  it("is safe to call with an already closed pool", async () => {
+    const database = await createTestDatabase();
+    databases.push(database);
     const server = createServer();
 
-    await shutdown({ server, database, logger, timeoutMs: 50 });
+    await shutdown({ server, database: database.pool, logger, timeoutMs: 50 });
     await expect(
-      shutdown({ server, database, logger, timeoutMs: 50 }),
+      shutdown({ server, database: database.pool, logger, timeoutMs: 50 }),
     ).resolves.toBeUndefined();
   });
 });

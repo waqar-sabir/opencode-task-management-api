@@ -1,0 +1,22 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: task-management-db
+    environment:
+      POSTGRES_USER: task
+      POSTGRES_PASSWORD: task
+      POSTGRES_DB: task_management
+    ports:
+      # Host port 5433 avoids clashing with a local PostgreSQL on 5432.
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U task -d task_management"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  pgdata:

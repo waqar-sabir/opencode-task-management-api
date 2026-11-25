@@ -1,11 +1,12 @@
 # Task Management API
 
-A single-user task management API that runs locally with Node.js 24 and one
-SQLite file. No accounts, no external services, no build step required in
-development.
+A single-user task management API that runs locally with Node.js 24 and PostgreSQL
+17 via Docker Compose. No accounts, no external services for task CRUD, no build step
+required in development. Integration connectors (GitHub, Google Tasks, Slack, Notion,
+MCP, n8n) are optional and developed as independent modules.
 
-> **Status:** v1.1 complete. See [`docs/SPEC.md`](docs/SPEC.md) for the behavior
-> contract and [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) for the verification
+> **Status:** v2.0 — PostgreSQL foundation. See [`docs/SPEC.md`](docs/SPEC.md) for the
+> behavior contract and [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) for the verification
 > record. The dashboard is a companion React SPA in `dashboard/`.
 
 ## Requirements
@@ -40,7 +41,9 @@ npm ci --prefix dashboard
 | `NODE_ENV` | `development` | `development`, `test`, `production` |
 | `PORT` | `3000` | integer `1`–`65535` |
 | `HOST` | `127.0.0.1` | any bind address; non-loopback values log a no-auth warning |
-| `DATABASE_PATH` | `./data/tasks.db` | file path, or `:memory:` for tests |
+| `DATABASE_URL` | `postgres://task:task@127.0.0.1:5433/task_management` | Postgres connection string |
+| `DATABASE_SSL` | `false` | `true` or `false`; enables SSL for the PostgreSQL connection |
+| `DATABASE_POOL_MAX` | `10` | Integer 1–100; maximum connections in the pool |
 | `LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn`, `error`, `fatal` |
 
 ### Dashboard proxy environment
@@ -85,6 +88,13 @@ the API and the dashboard.
 ## Run
 
 ```bash
+npm run db:up
+```
+
+Starts PostgreSQL 17 via Docker Compose (port 5433) and creates the development and
+test databases.
+
+```bash
 npm run dev
 ```
 
@@ -92,14 +102,14 @@ npm run dev
 {"level":30,...,"url":"http://127.0.0.1:3000","msg":"listening"}
 ```
 
-For a throwaway database and a different port:
+For a different port:
 
 ```bash
-DATABASE_PATH=/tmp/task-api/tasks.db PORT=3001 npm run dev
+PORT=3001 npm run dev
 ```
 
 Stop the process with `Ctrl+C`. `SIGINT` and `SIGTERM` both drain in-flight
-requests, close SQLite, and exit cleanly; data survives the restart.
+requests, close the PostgreSQL pool, and exit cleanly; data survives the restart.
 
 ## API
 
@@ -214,7 +224,7 @@ deleted. Deleted tasks disappear from detail, list, search, and filter results.
 curl -i http://127.0.0.1:3000/healthz
 ```
 
-`200 {"status":"ok"}` when storage responds; `503` when the SQLite probe fails.
+`200 {"status":"ok"}` when storage responds; `503` when the PostgreSQL health probe fails.
 The health endpoint is intentionally unversioned.
 
 ### Errors
@@ -239,7 +249,7 @@ Every error uses the same envelope:
 | `404` | `NOT_FOUND` | No task with that ID, or unknown route |
 | `413` | `PAYLOAD_TOO_LARGE` | Request body over 100 KB |
 | `415` | `UNSUPPORTED_MEDIA_TYPE` | Write body without `application/json` |
-| `503` | `STORAGE_UNAVAILABLE` | SQLite busy/locked or health probe failure |
+| `503` | `STORAGE_UNAVAILABLE` | PostgreSQL connection, shutdown, or capacity failure |
 | `500` | `INTERNAL_ERROR` | Unexpected failure; no stack traces or SQL text leak |
 
 ```bash
@@ -251,28 +261,30 @@ curl -i -X POST http://127.0.0.1:3000/api/v1/tasks \
 
 ## Database
 
-The SQLite file lives at `DATABASE_PATH` (default `./data/tasks.db`). On POSIX
-the parent directory is created with mode `0700` and the file with mode `0600`.
-The database opens in WAL mode with a 5-second busy timeout and `foreign_keys`
-enabled.
+PostgreSQL 17 is started via Docker Compose (`npm run db:up`). The connection URL
+is `DATABASE_URL` (default `postgres://task:task@127.0.0.1:5433/task_management`);
+the test database URL is `TEST_DATABASE_URL`
+(default `postgres://task:task@127.0.0.1:5433/task_management_test`).
 
-Reset by deleting the data directory while the server is stopped:
+Each test gets an isolated schema; no test shares DB state. Migrations run at
+startup under a `pg_advisory_lock`. A database written by a newer build fails
+startup with a clear migration version error.
+
+Reset by running:
 
 ```bash
-rm -rf data/
+npm run db:down
 ```
 
-The directory and schema are recreated on the next start. To back up, stop the
-server and copy the `.db` file (and any `-wal`/`-shm` side files); to move the
-database, point `DATABASE_PATH` at the copy.
+Then `npm run db:up` and migrations recreate an empty, migrated schema.
 
-Schema migrations run automatically at startup. A database written by a newer
-build fails startup with a clear version error instead of being modified.
+To back up, stop the process and use `pg_dump`; to move the database, point
+`DATABASE_URL` at the copy.
 
 ## Dashboard
 
 The dashboard is a same-origin React SPA served from `dashboard/` and built with
-Vite. It consumes the documented `/api/v1` endpoints and never opens SQLite.
+Vite. It consumes the documented `/api/v1` endpoints and never opens PostgreSQL.
 
 ### Starting the dashboard
 
@@ -316,7 +328,8 @@ There is no authentication. The server binds to loopback by default; anyone who
 can reach the port can read and modify every task. Do not expose it to a network.
 A non-loopback `HOST` logs a warning at startup. Logs contain request ID, method,
 path, status, and duration, but never task content, request bodies, or query
-strings.
+strings. Integration secrets, when configured, are encrypted at rest with
+AES-256-GCM using `INTEGRATIONS_SECRET_KEY` and never logged.
 
 The dashboard shares the same-origin boundary. It never writes task content to
 `localStorage`, `sessionStorage`, cookies, or the URL, and it adds no CORS

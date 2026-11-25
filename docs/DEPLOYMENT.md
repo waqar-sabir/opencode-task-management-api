@@ -5,8 +5,7 @@
 This document outlines the GitHub Actions CI/CD pipeline for the Task Management API project.
 The pipeline automates testing, building, and verification for both the API and dashboard components.
 
-**Important:** This project currently runs on Node.js with Express and `node:sqlite`. This plan
-assumes the existing infrastructure remains in place.
+**Important:** This project runs on Node.js with Express and PostgreSQL 17 via Docker Compose.
 
 ---
 
@@ -16,7 +15,7 @@ assumes the existing infrastructure remains in place.
 task-management-api/
 ├── .github/workflows/      # CI/CD workflows (to be created)
 ├── package.json            # Root scripts and dependencies
-├── npm-lock.json           # Lockfile for reproducible installs
+├── package-lock.json       # Lockfile for reproducible installs
 ├── tsconfig.json           # TypeScript config (ESM, NodeNext, strict)
 ├── tsconfig.build.json     # Build config (emits to dist/)
 ├── eslint.config.js         # ESLint flat config
@@ -43,7 +42,7 @@ task-management-api/
 │   └── integration/        # Supertest HTTP, health, shutdown, persistence tests
 ├── scripts/                # benchmark.ts (10k-task performance)
 ├── docs/                   # Architecture, specification, plan, acceptance records
-├── data/                   # Runtime SQLite file (gitignored)
+├── docker-compose.yml      # PostgreSQL 17 service
 └── dist/                   # API build output (gitignored)
 ```
 
@@ -309,7 +308,7 @@ jobs:
 - Executes `npm run test` (Vitest + Supertest suite, 151 tests)
 - Executes `npm run test:coverage` (enforces 85% core logic thresholds)
 - Uploads coverage artifact for 30 days
-- Uses `:memory:` SQLite databases; no test touches `./data`
+- Uses isolated PostgreSQL schemas; no test touches the development database
 
 ### 3. Dashboard Tests (`dashboard-tests` job)
 - Runs in a separate job with `working-directory: ./dashboard`
@@ -364,7 +363,7 @@ jobs:
 | **Coverage** | `vitest` + `@vitest/coverage-v8` (v8 inliner) |
 | **ESLint** | Flat config (`eslint.config.js`) with `dashboard/` ignored at root |
 | **Cache strategy** | GitHub Actions `actions/cache` for `node_modules` keyed on `package-lock.json` |
-| **Test isolation** | Each job runs `npm ci` fresh; databases use `:memory:` or temp directories |
+| **Test isolation** | Each job runs `npm ci` fresh; tests use isolated PostgreSQL schemas |
 | **Artifacts** | Coverage and screenshot artifacts retained 30 days; not tracked in git |
 
 ---
@@ -376,14 +375,14 @@ jobs:
 | `NODE_ENV` | `development` default; override via repo secret for CI | Affects `config.ts` validation and test behavior |
 | `PORT` | `3000` default; can be overridden per environment | API bind port |
 | `HOST` | `127.0.0.1` default; non-loopback warns about no-auth | API bind address |
-| `DATABASE_PATH` | `./data/tasks.db` default; temp path in CI | SQLite file path (`:memory:` for unit tests) |
+| `DATABASE_URL` | `postgres://task:task@127.0.0.1:5433/task_management` | PostgreSQL connection string |
 | `LOG_LEVEL` | `info` default | pino log level |
 | `VITE_API_BASE_URL` | `/api/v1` default; can be overridden via secret | Dashboard API base URL |
 | `VITE_HEALTH_URL` | `/healthz` default | Dashboard health endpoint |
 | `TASK_API_URL` | `http://127.0.0.1:3000` default; proxy target | Override Vite dev server proxy target |
 
 **No secrets are required for the CI pipeline to run.** All defaults are baked into the codebase.
-Only `DATABASE_PATH` needs overriding if a non-default SQLite location is desired.
+No secrets are required for the CI pipeline to run. All defaults are baked into the codebase.
 
 ---
 
@@ -391,7 +390,7 @@ Only `DATABASE_PATH` needs overriding if a non-default SQLite location is desire
 
 | From | To | Effort | Notes |
 |------|-----|--------|-------|
-| Current Express + `node:sqlite` | This plan's workflows | **Low** | Add the `.github/workflows/` files shown above. Can be implemented incrementally. |
+| Current Express + PostgreSQL | This plan's workflows | **Low** | Add the `.github/workflows/` files shown above. Can be implemented incrementally. |
 | Dashboard in `dashboard/` | Dashboard moved to separate repo | **Medium** | Dashboard has its own `package.json`, `lockfile`, `tsconfig`, and config. Could be extracted but currently co-located for convenience. |
 
 ---
@@ -444,6 +443,6 @@ Before requesting a review, ensure:
 
 ---
 
-*Plan generated for GitHub Actions CI/CD pipeline. No code changes to the existing Express + `node:sqlite` implementation are required.*
+*Plan generated for GitHub Actions CI/CD pipeline. No code changes to the existing Express + PostgreSQL implementation are required.*
 Last updated : 2026-11-22
 Last triggered: Sat Nov 21 23:55:39 UTC 2026
